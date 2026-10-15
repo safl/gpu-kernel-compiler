@@ -1,0 +1,11 @@
+version = 1
+SPDX-PackageName = "gpu-kernel-compiler"
+SPDX-PackageDownloadLocation = "https://github.com/safl/gpu-kernel-compiler"
+
+# Files that cannot carry a header of their own: lists and ignore files.
+# A file's own SPDX tags take precedence over these.
+[[annotations]]
+path = "**"
+precedence = "closest"
+SPDX-FileCopyrightText = "Simon A. F. Lund <os@safl.dk>"
+SPDX-License-Identifier = "BSD-3-Clause"

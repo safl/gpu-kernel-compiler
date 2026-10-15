@@ -1,0 +1,163 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: Simon A. F. Lund <os@safl.dk>
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# gkcc, the GPU kernel compiler driver: the image's one entry point. A kernel
+# source in, device code for one target out, whichever vendor's toolchain
+# that target takes.
+set -euo pipefail
+
+share=/usr/share/gpu-kernel-compiler
+nvidia_mount=/opt/nvidia
+nvidia_image=$(cat "$share/nvidia-image")
+
+usage() {
+    cat >&2 <<EOF
+usage: gkcc --target TARGET [OPTION...] IN -o OUT
+       gkcc --targets | --manifest
+
+Compiles IN ('-' reads stdin) for TARGET into OUT: a cubin for sm_*, an
+AMD code object for gfx*, a zebin for dg2.
+
+  -x LANG         the input language: cl, OpenCL C, the default; or ptx,
+                  for sm_* only, what -S writes, the default for IN.ptx.
+                  Other languages, such as SPIR-V, may come later.
+
+  --prelude FILE  prepend FILE to the source; repeatable, in order. The
+                  source's own directory stays on the include path.
+  --ptxas OPT     pass OPT to ptxas (sm_* only); repeatable
+  -S              sm_* only: stop at PTX, to be edited and passed back
+  -DNAME[=VAL], -IDIR, -cl-*
+                  OpenCL build options, for every target. -cl-intel-*
+                  go to ocloc's -internal_options.
+  anything else   passed to clang as is (sm_* and gfx* only)
+
+The defaults are -cl-std=CL2.0 -O3, which later options override.
+sm_* targets need NVIDIA's ptxas and libdevice, which this image does not
+carry. Mount NVIDIA's image read-only at $nvidia_mount:
+
+  --mount type=image,src=$nvidia_image,dst=$nvidia_mount
+
+Targets: $(tr '\n' ' ' <"$share/targets")
+EOF
+    exit "${1:-2}"
+}
+
+die() {
+    echo "gkcc: $*" >&2
+    exit 1
+}
+
+target="" src="" out="" lang="" asm=0
+preludes=() opts=() ptxas_opts=()
+while (($#)); do
+    case $1 in
+    --targets) exec cat "$share/targets" ;;
+    --manifest) exec cat "$share/manifest" ;;
+    -h | --help) usage 0 ;;
+    --target=*) target=${1#*=} ;;
+    --target | -o | -x | --prelude | --ptxas | -D | -I | -Xclang | -include)
+        (($# >= 2)) || usage
+        case $1 in
+        --target) target=$2 ;;
+        -o) out=$2 ;;
+        -x) lang=$2 ;;
+        --prelude) preludes+=("$2") ;;
+        --ptxas) ptxas_opts+=("$2") ;;
+        *) opts+=("$1" "$2") ;;
+        esac
+        shift
+        ;;
+    -S) asm=1 ;;
+    -) [[ -z $src ]] || usage && src=- ;;
+    -*) opts+=("$1") ;;
+    *) [[ -z $src ]] || usage && src=$1 ;;
+    esac
+    shift
+done
+[[ -n $target && -n $src && -n $out ]] || usage
+grep -qx -- "$target" "$share/targets" ||
+    die "no target $target; this image builds: $(tr '\n' ' ' <"$share/targets")"
+if [[ -z $lang ]]; then
+    case $src in *.ptx) lang=ptx ;; *) lang=cl ;; esac
+fi
+case $lang in
+cl) ;;
+ptx) [[ $target == sm_* ]] || die "-x ptx is for sm_* targets only" ;;
+*) die "no input language $lang; gkcc takes OpenCL C (-x cl), and PTX (-x ptx) for sm_*" ;;
+esac
+if [[ $target != sm_* ]] && ((asm || ${#ptxas_opts[@]})); then
+    die "-S and --ptxas are for sm_* targets only"
+fi
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
+# A prelude, or stdin, puts the source in tmp; keep its includes resolving
+if ((${#preludes[@]})) || [[ $src == - ]]; then
+    [[ $src == - ]] || opts=(-I "$(dirname "$src")" "${opts[@]}")
+    cat "${preludes[@]}" "$src" >"$tmp/input.$lang"
+    src=$tmp/input.$lang
+fi
+
+CL=(-x cl -cl-std=CL2.0 -O3 -Xclang -finclude-default-header)
+
+# The path of $1 in NVIDIA's CUDA under the mount, or why there is none
+nvidia_tool() {
+    local cuda tool err
+    for cuda in "$nvidia_mount"/usr/local/cuda-*; do :; done
+    tool=$cuda/$1
+    if [[ ! -e $tool ]]; then
+        die "$target needs NVIDIA's ptxas and libdevice, which this image does not carry." \
+            "Add NVIDIA's image as a read-only mount:"$'\n'"  --mount type=image,src=$nvidia_image,dst=$nvidia_mount"
+    fi
+    if [[ $1 == bin/ptxas ]] && ! err=$("$tool" --version 2>&1); then
+        die "$tool is mounted but does not run here ($err);" \
+            "mount $nvidia_image, the image this one is tested with"
+    fi
+    echo "$tool"
+}
+
+case $target in
+sm_*)
+    ptx=$src
+    if [[ $lang == cl ]]; then
+        libdevice=$(nvidia_tool nvvm/libdevice/libdevice.10.bc)
+        ptx=$tmp/kernel.ptx
+        ((asm)) && ptx=$out
+        # clang has no OpenCL builtin library for nvptx64: a kernel brings
+        # its own work-item functions, and libdevice's __nv_* math is linked.
+        # --cuda-path tells clang the CUDA version, which sets the PTX version;
+        # without it, clang's default lacks e.g. the warp shuffles.
+        clang "${CL[@]}" -target nvptx64-nvidia-cuda -march="$target" \
+            --cuda-path="${libdevice%/nvvm/*}" \
+            -Xclang -mlink-builtin-bitcode -Xclang "$libdevice" \
+            "${opts[@]}" -S -o "$ptx" "$src"
+    fi
+    if ((!asm)); then
+        ptxas=$(nvidia_tool bin/ptxas)
+        "$ptxas" -arch="$target" "${ptxas_opts[@]}" -o "$out" "$ptx"
+    fi
+    ;;
+gfx*)
+    /opt/rocm/lib/llvm/bin/clang "${CL[@]}" -target amdgcn-amd-amdhsa -mcpu="$target" \
+        "${opts[@]}" -c -o "$out" "$src"
+    ;;
+*)
+    options=(-cl-std=CL2.0) internal=()
+    for ((i = 0; i < ${#opts[@]}; i++)); do
+        case ${opts[i]} in
+        -D | -I) options+=("${opts[i]}${opts[i + 1]}") && i=$((i + 1)) ;;
+        -cl-intel-*) internal+=("${opts[i]}") ;;
+        -D* | -I* | -cl-*) options+=("${opts[i]}") ;;
+        *) die "${opts[i]} is a clang option; ocloc takes -D, -I and -cl-* only" ;;
+        esac
+    done
+    # ocloc names its output after -output, in -out_dir, with the SPIR-V beside it
+    ocloc compile -q -device "$target" -file "$src" -options "${options[*]}" \
+        ${internal[@]+-internal_options "${internal[*]}"} \
+        -output kernel -output_no_suffix -out_dir "$tmp"
+    mv "$tmp/kernel.bin" "$out"
+    ;;
+esac

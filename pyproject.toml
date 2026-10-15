@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: Simon A. F. Lund <os@safl.dk>
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+# Not a package: settings for the tools that check kobj_check
+[tool.pytest.ini_options]
+pythonpath = ["."]
+# a cijoe install adds a plugin that writes cijoe-output/ into the tree
+addopts = "-p no:cijoe"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
