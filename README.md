@@ -6,6 +6,10 @@ SPDX-License-Identifier: BSD-3-Clause
 
 # gpu-kernel-compiler
 
+[![image](https://github.com/safl/gpu-kernel-compiler/actions/workflows/image.yml/badge.svg)](https://github.com/safl/gpu-kernel-compiler/actions/workflows/image.yml)
+[![lint](https://github.com/safl/gpu-kernel-compiler/actions/workflows/lint.yml/badge.svg)](https://github.com/safl/gpu-kernel-compiler/actions/workflows/lint.yml)
+[![REUSE status](https://api.reuse.software/badge/github.com/safl/gpu-kernel-compiler)](https://api.reuse.software/info/github.com/safl/gpu-kernel-compiler)
+
 A container image that compiles GPU kernels ahead of time, for AMD, Intel and
 NVIDIA GPUs, on any x86-64 machine, with no GPU. `gkcc` is its compiler
 driver: one command line for every target, so a build calls each vendor the
