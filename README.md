@@ -149,7 +149,11 @@ make test                   # kobj_check's unit tests
 by stdin and through PTX, with and without NVIDIA's image mounted, and checks
 with [kobj_check.py](kobj_check.py) that each output is device code for its
 target holding the kernel. It also checks that a target refuses a language
-it does not take. Every version in the [Dockerfile](Dockerfile) is pinned: the base
+it does not take, and, in [tests/cutlass.sh](tests/cutlass.sh), that a
+CUTLASS GEMM kernel compiles for `sm_86` with clang and with nvcc, its
+tensor-core instructions in the cubin. CUTLASS (BSD-3-Clause) is fetched for
+the test at a pinned release and checksum; it is in neither this repository
+nor the image. Every version in the [Dockerfile](Dockerfile) is pinned: the base
 image by digest, ROCm and clang by package version, IGC and ocloc by
 checksum. CI builds and smoke-tests the image when any of it changes, and
 publishes it from `main` as `latest` and as the commit.

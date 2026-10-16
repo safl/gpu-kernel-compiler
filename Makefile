@@ -14,7 +14,7 @@ FORMAT = $(if $(filter podman,$(notdir $(ENGINE))),--format docker)
 
 help:
 	@echo "make build    build $(IMAGE):$(TAG)"
-	@echo "make smoke    compile tests/kernel.cl for every target in it and check each output"
+	@echo "make smoke    compile the tests' kernels for every target in it and check each output"
 	@echo "make push     push it, and as :TAG for each of TAGS"
 	@echo "make test     unit-test kobj_check"
 	@echo "make all      build, then smoke"
@@ -26,6 +26,7 @@ build:
 
 smoke:
 	ENGINE=$(ENGINE) tests/smoke.sh $(IMAGE):$(TAG)
+	ENGINE=$(ENGINE) tests/cutlass.sh $(IMAGE):$(TAG)
 
 push:
 	$(ENGINE) push $(IMAGE):$(TAG)
