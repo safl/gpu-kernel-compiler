@@ -4,9 +4,9 @@
 #
 # GPU kernels to device code for AMD, Intel and NVIDIA GPUs, no GPU needed:
 # ROCm's clang and device libraries, Intel's ocloc and IGC, and LLVM's clang
-# for nvptx64. Nothing of NVIDIA's is in it; gkcc runs ptxas and libdevice,
-# and reads CUDA's headers, from NVIDIA's own image, mounted at run time
-# (see README.md).
+# for nvptx64 and for SPIR-V that PoCL's CPU device runs. Nothing of
+# NVIDIA's is in it; gkcc runs ptxas and libdevice, and reads CUDA's headers,
+# from NVIDIA's own image, mounted at run time (see README.md).
 
 FROM docker.io/library/ubuntu:26.04@sha256:88a381d5b5eeb2b35d3ad70925a362c37ce569daf43ede89ff818ec20e4d3794
 

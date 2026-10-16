@@ -13,7 +13,9 @@ SPDX-License-Identifier: BSD-3-Clause
 A container image that compiles GPU kernels ahead of time, for AMD, Intel and
 NVIDIA GPUs, on any x86-64 machine, with no GPU. `gkcc` is its compiler
 driver: one command line for every target, so a build calls each vendor the
-same way and gets the same kernel object whichever machine ran it.
+same way and gets the same kernel object whichever machine ran it. One
+target, `emu`, is no GPU: it is SPIR-V for PoCL's CPU device, so a kernel
+built for the GPUs runs, through OpenCL, where there is none.
 
 ```
 ghcr.io/safl/gpu-kernel-compiler
@@ -27,6 +29,7 @@ ghcr.io/safl/gpu-kernel-compiler
 | `gfx1012` | AMD Navi 14         | ROCm's clang and device libraries         | AMD code object |
 | `gfx1101` | AMD Navi 32         | ROCm's clang and device libraries         | AMD code object |
 | `dg2`     | Intel Arc A-series  | Intel's `ocloc` and IGC                   | zebin           |
+| `emu`     | PoCL's CPU device   | LLVM clang 22's SPIR-V backend            | SPIR-V 1.2      |
 
 The input languages, `-x` or by the file's extension:
 
@@ -36,7 +39,7 @@ The input languages, `-x` or by the file's extension:
 | `ptx`   | PTX                  | `.ptx`              | `sm_*`         |
 | `cuda`  | CUDA C++ device code | `.cu`               | `sm_*`         |
 | `hip`   | HIP C++ device code  | `.hip`              | `sm_*`, `gfx*` |
-| `spirv` | OpenCL SPIR-V        | `.spv`              | `dg2`          |
+| `spirv` | OpenCL SPIR-V        | `.spv`              | `dg2`, `emu`   |
 
 A target refuses a language it does not take, naming why.
 `gkcc --targets -x LANG` lists the targets that take `LANG`.
@@ -54,7 +57,7 @@ gkcc --manifest
 
 | Option             | Meaning                                                              |
 |--------------------|----------------------------------------------------------------------|
-| `-DNAME[=VAL]`, `-IDIR`, `-cl-*` | build options, for every target; only `-cl-*` for `spirv` |
+| `-DNAME[=VAL]`, `-IDIR`, `-cl-*` | build options, for every target; for `spirv`, only `-cl-*` and only for `dg2` |
 | `-cl-intel-*`      | to `ocloc`'s `-internal_options`, for `dg2`                          |
 | `--prelude FILE`   | prepended to the source, repeatable, not for `spirv`; `IN`'s directory stays on the include path |
 | `-x LANG`          | the input language, see above                                        |
@@ -98,6 +101,13 @@ function. ROCm 10.1's translator can remap the address spaces
 (`--spirv-addrspace-map`) but not retarget the module; Ubuntu's
 `llvm-spirv-21` can do neither. `--spirv-target-triple`, which retargets it
 for amdgcn, is in newer translators than either.
+
+For `emu`, SPIR-V is checked and copied, PoCL compiling it when it is
+loaded. What `gkcc` checks is that PoCL takes it: a module for OpenCL with
+64-bit addresses, at SPIR-V 1.2 at most, the newest PoCL 6.0 lists. clang's
+SPIR-V backend writes 1.4 unless told otherwise, so `gkcc` asks it for 1.2
+when it compiles OpenCL C for `emu`, and refuses a newer module given as
+`-x spirv`.
 
 `gkcc --manifest` prints what the image holds, one component a line: its
 name, its version, and what the tool reports of itself. The license texts of

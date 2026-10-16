@@ -18,15 +18,15 @@ usage: gkcc --target TARGET [OPTION...] IN -o OUT
        gkcc --targets [-x LANG] | --manifest
 
 Compiles IN ('-' reads stdin) for TARGET into OUT: a cubin for sm_*, an
-AMD code object for gfx*, a zebin for dg2. --targets lists the targets,
-or with -x those that take LANG.
+AMD code object for gfx*, a zebin for dg2, SPIR-V 1.2 for emu. --targets
+lists the targets, or with -x those that take LANG.
 
   -x LANG         the input language, by default from IN's extension:
                     cl    OpenCL C (.cl, and anything else), every target
                     ptx   PTX, what -S writes (.ptx), sm_*
                     cuda  CUDA C++ device code (.cu), sm_*
                     hip   HIP C++ device code (.hip), sm_* and gfx*
-                    spirv OpenCL SPIR-V (.spv), dg2
+                    spirv OpenCL SPIR-V (.spv), dg2 and emu
 
   --prelude FILE  prepend FILE to the source, not for spirv; repeatable,
                   in order. The source's own directory stays on the
@@ -64,7 +64,7 @@ languages() {
     case $1 in
     sm_*) echo cl ptx cuda hip ;;
     gfx*) echo cl hip ;;
-    *) echo cl spirv ;;
+    dg2 | emu) echo cl spirv ;;
     esac
 }
 
@@ -124,7 +124,7 @@ if [[ " $(languages "$target") " != *" $lang "* ]]; then
     cuda) die "-x cuda is for sm_* targets, CUDA being NVIDIA's; for gfx*, write HIP (-x hip)" ;;
     # The translators can turn SPIR-V into LLVM IR, but not lower OpenCL's
     # address spaces and kernels to amdgcn's or nvptx's (see README.md)
-    spirv) die "-x spirv is for dg2 only; SPIR-V for $target is not implemented" ;;
+    spirv) die "-x spirv is for dg2 and emu; SPIR-V for $target is not implemented" ;;
     *) die "-x $lang is not for $target, which takes: $(languages "$target")" ;;
     esac
 fi
@@ -220,6 +220,18 @@ sm_*)
     if ((!asm)); then
         ptxas=$(nvidia_tool bin/ptxas)
         "$ptxas" -arch="$target" "${ptxas_opts[@]}" -o "$out" "$ptx"
+    fi
+    ;;
+emu)
+    # PoCL's CPU device takes SPIR-V up to 1.2, clang's default is newer
+    if [[ $lang == spirv ]]; then
+        ((${#opts[@]} == 0)) || die "${opts[0]}: SPIR-V for emu is copied as it is, without options"
+        why=$(kobj_check "$src=emu") ||
+            die "$src is not what emu takes, SPIR-V up to 1.2 for OpenCL with 64-bit" \
+                "addresses; kobj_check: ${why#*: }"
+        cp "$src" "$out"
+    else
+        clang "${CL[@]}" --target=spirv64v1.2 "${opts[@]}" -c -o "$out" "$src"
     fi
     ;;
 gfx*)
