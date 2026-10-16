@@ -31,17 +31,21 @@ or with -x those that take LANG.
   --prelude FILE  prepend FILE to the source, not for spirv; repeatable,
                   in order. The source's own directory stays on the
                   include path.
+  --cuda-compiler C
+                  what compiles cuda: clang, the default, or nvcc, from
+                  NVIDIA's mounted image, with this image's g++ as host
+                  compiler
   --ptxas OPT     pass OPT to ptxas (sm_* only); repeatable
   -S              sm_* only: stop at PTX, to be edited and passed back
   -DNAME[=VAL], -IDIR, -cl-*
                   build options, for every target; for spirv, -cl-*
                   only. -cl-intel-* go to ocloc's -internal_options.
-  anything else   passed to clang as is (sm_* and gfx* only)
+  anything else   passed to clang, or nvcc, as is (sm_* and gfx* only)
 
 The defaults are -cl-std=CL2.0 -O3 for cl and -O3 for cuda and hip, which
-later options override. sm_* targets need NVIDIA's CUDA (ptxas, libdevice and
-headers), which this image does not carry. Mount NVIDIA's image read-only
-at $nvidia_mount:
+later options override. sm_* targets need NVIDIA's CUDA (ptxas, libdevice,
+headers and nvcc), which this image does not carry. Mount NVIDIA's image
+read-only at $nvidia_mount:
 
   --mount type=image,src=$nvidia_image,dst=$nvidia_mount
 
@@ -64,7 +68,7 @@ languages() {
     esac
 }
 
-target="" src="" out="" lang="" asm=0 list=0
+target="" src="" out="" lang="" asm=0 list=0 cuda_compiler=clang
 preludes=() opts=() ptxas_opts=()
 while (($#)); do
     case $1 in
@@ -72,7 +76,8 @@ while (($#)); do
     --manifest) exec cat "$share/manifest" ;;
     -h | --help) usage 0 ;;
     --target=*) target=${1#*=} ;;
-    --target | -o | -x | --prelude | --ptxas | -D | -I | -Xclang | -include)
+    --cuda-compiler=*) cuda_compiler=${1#*=} ;;
+    --target | -o | -x | --prelude | --ptxas | --cuda-compiler | -D | -I | -Xclang | -include)
         (($# >= 2)) || usage
         case $1 in
         --target) target=$2 ;;
@@ -80,6 +85,7 @@ while (($#)); do
         -x) lang=$2 ;;
         --prelude) preludes+=("$2") ;;
         --ptxas) ptxas_opts+=("$2") ;;
+        --cuda-compiler) cuda_compiler=$2 ;;
         *) opts+=("$1" "$2") ;;
         esac
         shift
@@ -125,6 +131,11 @@ fi
 if [[ $target != sm_* ]] && ((asm || ${#ptxas_opts[@]})); then
     die "-S and --ptxas are for sm_* targets only"
 fi
+case $cuda_compiler in
+clang) ;;
+nvcc) [[ $lang == cuda ]] || die "--cuda-compiler nvcc is for -x cuda" ;;
+*) die "no CUDA compiler $cuda_compiler; gkcc takes clang and nvcc" ;;
+esac
 if [[ $lang == spirv ]]; then
     ((${#preludes[@]} == 0)) || die "--prelude is for source languages, not SPIR-V"
     for o in "${opts[@]}"; do
@@ -154,7 +165,7 @@ nvidia_tool() {
     for cuda in "$nvidia_mount"/usr/local/cuda-*; do :; done
     tool=$cuda/$1
     if [[ ! -e $tool ]]; then
-        die "$target needs NVIDIA's CUDA (ptxas, libdevice and headers), which this image does not carry." \
+        die "$target needs NVIDIA's CUDA (ptxas, libdevice, headers and nvcc), which this image does not carry." \
             "Add NVIDIA's image as a read-only mount:"$'\n'"  --mount type=image,src=$nvidia_image,dst=$nvidia_mount"
     fi
     if [[ $1 == bin/ptxas ]] && ! err=$("$tool" --version 2>&1); then
@@ -166,6 +177,16 @@ nvidia_tool() {
 
 case $target in
 sm_*)
+    if [[ $cuda_compiler == nvcc ]]; then
+        # nvcc runs ptxas itself, or with -S stops before it
+        nvcc=$(nvidia_tool bin/nvcc)
+        kind=-cubin xptxas=()
+        ((asm)) && kind=-ptx
+        for o in "${ptxas_opts[@]}"; do xptxas+=(-Xptxas "$o"); done
+        "$nvcc" -ccbin g++ -x cu "$kind" -arch="$target" "${xptxas[@]}" "${opts[@]}" \
+            -o "$out" "$src"
+        exit
+    fi
     ptx=$src
     if [[ $lang != ptx ]]; then
         ptx=$tmp/kernel.ptx

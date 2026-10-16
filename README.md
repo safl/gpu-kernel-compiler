@@ -60,7 +60,8 @@ gkcc --manifest
 | `-x LANG`          | the input language, see above                                        |
 | `-S`               | `sm_*`: stop at PTX, which `gkcc` assembles when given back          |
 | `--ptxas OPT`      | `sm_*`: passed to `ptxas`, repeatable                                |
-| anything else      | passed to clang as is, for `sm_*` and `gfx*`                         |
+| `--cuda-compiler C` | `cuda`: `clang`, the default, or `nvcc`                             |
+| anything else      | passed to clang, or nvcc, as is, for `sm_*` and `gfx*`               |
 
 clang has no OpenCL builtin library for nvptx64, so an `sm_*` kernel brings
 its own work-item functions, typically in a prelude. NVIDIA's libdevice is
@@ -72,6 +73,12 @@ to be found by name is `extern "C"`; otherwise its name is C++-mangled. The
 mounted CUDA is newer than clang 22 knows of, which clang compiles all the
 same, but clang does not define `__CUDACC_VER_MAJOR__` and lacks some of
 what nvcc's newest headers give, such as CUDA 12.8's `__nv_atomic_*`.
+
+`--cuda-compiler nvcc` compiles CUDA with NVIDIA's nvcc instead, from the
+mounted image, to a cubin, or to PTX with `-S`. nvcc runs a host compiler on
+device code too. NVIDIA's image has one, but it does not run outside that
+image's root, so this image carries g++ 15, a version CUDA 13 supports, for
+nvcc to use.
 
 HIP for a `gfx*` target is compiled by ROCm's clang, device code only, to
 the linked code object `hipcc --genco` makes. For an `sm_*` target it is
@@ -101,10 +108,10 @@ what is in it are in `/usr/share/gpu-kernel-compiler/licenses`.
 Nothing of NVIDIA's is in this repository or in the image. The CUDA EULA does
 not let anyone redistribute `ptxas`, and the license of NVIDIA's container
 images does not let us publish a derivative of one under our terms. So
-`gkcc` uses NVIDIA's own `ptxas`, libdevice and CUDA headers from NVIDIA's
-image, mounted read-only at `/opt/nvidia` when the container runs. Nothing
-is copied out of it or fetched. Using it is between you and NVIDIA, under
-their license.
+`gkcc` uses NVIDIA's own `ptxas`, libdevice, CUDA headers and nvcc from
+NVIDIA's image, mounted read-only at `/opt/nvidia` when the container runs.
+Nothing is copied out of it or fetched. Using it is between you and NVIDIA,
+under their license.
 
 The image to mount is pinned in [nvidia-image](nvidia-image), which the smoke
 test reads too, so the one tested is the one callers mount:

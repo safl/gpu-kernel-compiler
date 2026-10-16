@@ -84,6 +84,9 @@ script=$refuse'
     refuse --target dg2 --prelude prelude.cl kernel.spv
     refuse --target dg2 -DSCALE=2.0f kernel.spv
     refuse --target dg2 -x fortran kernel.cl
+    refuse --target sm_86 --cuda-compiler nvcc -DSCALE=2.0f -DOFFSET=1.0f kernel.cu
+    refuse --target sm_86 --cuda-compiler nvcc -DSCALE=2.0f -DOFFSET=1.0f kernel.hip
+    refuse --target sm_86 --cuda-compiler icc -DSCALE=2.0f -DOFFSET=1.0f kernel.cu
     refuse --target gfx1101 -DSCALE=2.0f -DOFFSET=1.0f kernel.cu
     refuse --target dg2 -x cuda -DSCALE=2.0f -DOFFSET=1.0f kernel.cu
     refuse --target dg2 -DSCALE=2.0f -DOFFSET=1.0f kernel.hip
@@ -108,6 +111,14 @@ script=$refuse'
         gkcc --target "$t" --prelude prelude.cl -DSCALE=2.0f -S kernel.cu -o "$t-cu.ptx"
         gkcc --target "$t" "$t-cu.ptx" -o "$t-cu-ptx.o"
         set -- "$@" "$t-cu.o=$t:smoke" "$t-cu-stdin.o=$t:smoke" "$t-cu-ptx.o=$t:smoke"
+        gkcc --target "$t" --cuda-compiler nvcc --prelude prelude.cl -DSCALE=2.0f kernel.cu \
+            -o "$t-nvcc.o"
+        cat prelude.cl kernel.cu |
+            gkcc --target "$t" --cuda-compiler=nvcc -x cuda -DSCALE=2.0f - -o "$t-nvcc-stdin.o"
+        gkcc --target "$t" --cuda-compiler nvcc --prelude prelude.cl -DSCALE=2.0f -S kernel.cu \
+            -o "$t-nvcc.ptx"
+        gkcc --target "$t" "$t-nvcc.ptx" -o "$t-nvcc-ptx.o"
+        set -- "$@" "$t-nvcc.o=$t:smoke" "$t-nvcc-stdin.o=$t:smoke" "$t-nvcc-ptx.o=$t:smoke"
     done
     for t in $(gkcc --targets -x hip); do
         case $t in sm_*) ;; *) continue ;; esac

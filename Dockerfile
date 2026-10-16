@@ -14,6 +14,10 @@ FROM docker.io/library/ubuntu:26.04@sha256:88a381d5b5eeb2b35d3ad70925a362c37ce56
 # NVIDIA image nvidia-image pins; clang 21 cannot parse CUDA 13's, 22 can.
 ARG CLANG_MAJOR=22
 ARG CLANG_VERSION=1:22.1.2-1ubuntu1
+# nvcc's host compiler, which nvcc runs even on device code only. NVIDIA's
+# image has one, but it does not run outside that image's root.
+ARG GCC_MAJOR=15
+ARG GCC_VERSION=15.2.0-16ubuntu1
 
 # AMD's TheRock-based ROCm packages; rocmradeon 26.16 is the first with a
 # release (not ~pre) build for resolute.
@@ -39,13 +43,15 @@ ARG NEO_LICENSE_SHA256=987a002c6c9eb75290d9937735641ef4f4b670591ee79e1ac8edebe16
 
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
-# clang is pinned; what it runs on, and make for builds run inside the
-# image, follow the archive.
+# clang and g++ are pinned; what they run on, and make for builds run
+# inside the image, follow the archive.
 # hadolint ignore=DL3008
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         ca-certificates curl gnupg make python3 "clang-${CLANG_MAJOR}=${CLANG_VERSION}" \
+        "g++-${GCC_MAJOR}=${GCC_VERSION}" \
  && ln -s "clang-${CLANG_MAJOR}" /usr/bin/clang \
+ && ln -s "g++-${GCC_MAJOR}" /usr/bin/g++ \
  && rm -rf /var/lib/apt/lists/*
 
 # Only ROCm's LLVM package and what it depends on, not the math libraries a
@@ -145,9 +151,10 @@ RUN isas=$(find /opt/rocm/lib/llvm/amdgcn/bitcode -name 'oclc_isa_version_*.bc' 
         rocm-llvm "$rocm ($(/opt/rocm/lib/llvm/bin/clang --version | head -1))" \
         rocm-device-libs "$rocm (${isas% })" \
         hip "$rocm (amdrocm-runtime-dev${ROCM_SERIES} headers; nvidia_detail from rocm-systems ${ROCM_SOURCE_TAG})" \
+        g++ "$(dpkg-query -W -f '${Version}' "g++-${GCC_MAJOR}") (nvcc's host compiler)" \
         igc "$(dpkg-query -W -f '${Version}' intel-igc-core-2)" \
         ocloc "$(dpkg-query -W -f '${Version}' intel-ocloc)" \
-        nvidia "not in the image; ptxas, libdevice and CUDA headers mounted at run time from $(cat /usr/share/gpu-kernel-compiler/nvidia-image)" \
+        nvidia "not in the image; ptxas, libdevice, CUDA headers and nvcc mounted at run time from $(cat /usr/share/gpu-kernel-compiler/nvidia-image)" \
     > /usr/share/gpu-kernel-compiler/manifest \
  && cat /usr/share/gpu-kernel-compiler/manifest
 
