@@ -6,12 +6,14 @@
 
 Reads each file's ELF header (and, for an Intel zebin, its
 ``.note.intelgt.compat`` notes) and names the device it is for, so a compiler
-that silently emitted something else is caught. A ``:SYMBOL`` after the
-target also requires that symbol in the file's symbol table, so an object
-that lost its kernel is caught too. No GPU and no vendor tool is needed to
-read them.
+that silently emitted something else is caught. A SPIR-V module is for
+``emu`` when PoCL's CPU device can take it: OpenCL's memory model, 64-bit
+addresses, and a SPIR-V version up to 1.2. A ``:SYMBOL`` after the target
+also requires that symbol in the file's symbol table, or an entry point of
+that name in a SPIR-V module, so an object that lost its kernel is caught
+too. No GPU and no vendor tool is needed to read them.
 
-    kobj_check out/sm_86.o=sm_86 out/gfx900.o=gfx900:smoke out/dg2.o=dg2
+    kobj_check out/sm_86.o=sm_86 out/gfx900.o=gfx900:smoke out/dg2.o=dg2 out/emu.spv=emu
 
 Exits non-zero, naming each mismatch, unless every file is for its target
 and holds its symbol.
@@ -34,6 +36,14 @@ AMDGPU_MACH = {0x2C: "gfx900", 0x35: "gfx1012", 0x46: "gfx1101"}
 INTELGT_PRODUCT = {1270: "dg2"}
 NT_INTELGT_PRODUCT_FAMILY = 1
 SHT_SYMTAB = 2
+
+SPIRV_MAGIC = 0x07230203
+# The highest SPIR-V version PoCL's CPU device lists in CL_DEVICE_IL_VERSION
+EMU_SPIRV_VERSION = (1, 2)
+SPIRV_OP_MEMORY_MODEL = 14
+SPIRV_OP_ENTRY_POINT = 15
+SPIRV_PHYSICAL64 = 2
+SPIRV_OPENCL = 2
 
 
 class NotAKernelObject(ValueError):
@@ -62,10 +72,54 @@ def _intelgt_product(data: bytes, shoff: int, shentsize: int, shnum: int) -> int
     raise NotAKernelObject("zebin without a product family note")
 
 
+def _spirv_words(data: bytes) -> tuple[int, ...] | None:
+    """The module's words in its own byte order, None when it is not SPIR-V."""
+    if len(data) < 20 or len(data) % 4:
+        return None
+    for order in "<>":
+        words = struct.unpack(f"{order}{len(data) // 4}I", data)
+        if words[0] == SPIRV_MAGIC:
+            return words
+    return None
+
+
+def _spirv_instructions(words: tuple[int, ...]):
+    """Each instruction after the header, as (opcode, operand words)."""
+    pos = 5
+    while pos < len(words):
+        count, opcode = words[pos] >> 16, words[pos] & 0xFFFF
+        if not count or pos + count > len(words):
+            raise NotAKernelObject(f"SPIR-V instruction at word {pos} runs past the module")
+        yield opcode, words[pos + 1 : pos + count]
+        pos += count
+
+
+def _spirv_string(operands: tuple[int, ...]) -> str:
+    """A SPIR-V literal string, nul-terminated and packed four bytes a word."""
+    raw = b"".join(struct.pack("<I", w) for w in operands)
+    return raw[: raw.index(b"\0")].decode(errors="replace")
+
+
+def _identify_spirv(words: tuple[int, ...]) -> str:
+    major, minor = (words[1] >> 16) & 0xFF, (words[1] >> 8) & 0xFF
+    for opcode, operands in _spirv_instructions(words):
+        if opcode != SPIRV_OP_MEMORY_MODEL:
+            continue
+        if operands != (SPIRV_PHYSICAL64, SPIRV_OPENCL):
+            return "spirv-model-" + "-".join(map(str, operands))
+        if (major, minor) > EMU_SPIRV_VERSION:
+            return f"spirv-{major}.{minor}"
+        return "emu"
+    raise NotAKernelObject("SPIR-V module without a memory model")
+
+
 def identify(data: bytes) -> str:
-    """Name the device a kernel object is for: sm_NN, gfxNNN or dg2."""
+    """Name the device a kernel object is for: sm_NN, gfxNNN, dg2 or emu."""
+    words = _spirv_words(data)
+    if words:
+        return _identify_spirv(words)
     if len(data) < 0x40 or data[:4] != b"\x7fELF" or data[4] != 2 or data[5] != 1:
-        raise NotAKernelObject("not a little-endian ELF64 file")
+        raise NotAKernelObject("neither SPIR-V nor a little-endian ELF64 file")
     abiversion = data[8]
     machine, _version, _entry, _phoff, shoff, flags = struct.unpack_from("<HIQQQI", data, 0x12)
     shentsize, shnum = struct.unpack_from("<HH", data, 0x3A)
@@ -84,7 +138,15 @@ def identify(data: bytes) -> str:
 
 
 def symbols(data: bytes) -> set[str]:
-    """The names in an ELF64 file's .symtab, empty when it has none."""
+    """The names in an ELF64 file's .symtab, or a SPIR-V module's entry
+    points; empty when it has none."""
+    words = _spirv_words(data)
+    if words:
+        return {
+            _spirv_string(operands[2:])
+            for opcode, operands in _spirv_instructions(words)
+            if opcode == SPIRV_OP_ENTRY_POINT
+        }
     shoff = struct.unpack_from("<Q", data, 0x28)[0]
     shentsize, shnum = struct.unpack_from("<HH", data, 0x3A)
     names: set[str] = set()

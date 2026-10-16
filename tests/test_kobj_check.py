@@ -111,3 +111,43 @@ def test_main_reports_missing_symbol(tmp_path, capsys):
     assert kobj_check.main([f"{obj}=sm_86:saxpy", f"{obj}=sm_86"]) == 0
     assert kobj_check.main([f"{obj}=sm_86:gemm"]) == 1
     assert "sm_86 without gemm" in capsys.readouterr().out
+
+
+def _spirv(
+    version: int = 0x10200, model: tuple[int, int] = (2, 2), entries=("smoke",), order="<"
+) -> bytes:
+    """A SPIR-V module of a memory model and a kernel entry point per name."""
+
+    def inst(opcode: int, *operands: int) -> list[int]:
+        return [(len(operands) + 1) << 16 | opcode, *operands]
+
+    def string(s: str) -> list[int]:
+        raw = s.encode() + b"\0"
+        raw += bytes(-len(raw) % 4)
+        return list(struct.unpack(f"<{len(raw) // 4}I", raw))
+
+    words = [kobj_check.SPIRV_MAGIC, version, 0, 16, 0]
+    words += inst(17, 6)  # OpCapability Kernel
+    words += inst(kobj_check.SPIRV_OP_MEMORY_MODEL, *model)
+    for i, name in enumerate(entries):
+        words += inst(kobj_check.SPIRV_OP_ENTRY_POINT, 6, i + 1, *string(name), 9)
+    return struct.pack(f"{order}{len(words)}I", *words)
+
+
+@pytest.mark.parametrize("order", "<>")
+def test_spirv(order):
+    assert kobj_check.identify(_spirv(order=order)) == "emu"
+    assert kobj_check.identify(_spirv(0x10000, order=order)) == "emu"
+    assert kobj_check.identify(_spirv(0x10400, order=order)) == "spirv-1.4"
+    assert kobj_check.identify(_spirv(model=(1, 2), order=order)) == "spirv-model-1-2"
+    obj = _spirv(entries=("saxpy", "gemm_f16"), order=order)
+    assert kobj_check.symbols(obj) == {"saxpy", "gemm_f16"}
+    assert kobj_check.check(obj, "emu:gemm_f16") == "emu:gemm_f16"
+    assert kobj_check.check(obj, "emu:smoke") == "emu without smoke"
+
+
+def test_spirv_rejects():
+    with pytest.raises(kobj_check.NotAKernelObject):
+        kobj_check.symbols(_spirv() + struct.pack("<I", 9 << 16 | 15))
+    with pytest.raises(kobj_check.NotAKernelObject):
+        kobj_check.identify(struct.pack("<5I", kobj_check.SPIRV_MAGIC, 0x10200, 0, 1, 0))
