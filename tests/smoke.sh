@@ -39,7 +39,7 @@ script='
         case $t in sm_*) continue ;; esac
         gkcc --target "$t" --prelude prelude.cl -DSCALE=2.0f kernel.cl -o "$t.o"
         cat prelude.cl kernel.cl | gkcc --target "$t" -D SCALE=2.0f -I "$PWD" - -o "$t-stdin.o"
-        set -- "$@" "$t.o=$t" "$t-stdin.o=$t"
+        set -- "$@" "$t.o=$t:smoke" "$t-stdin.o=$t:smoke"
     done
     if gkcc --target sm_86 --prelude prelude.cl -DSCALE=2.0f kernel.cl -o sm_86.o 2>err; then
         echo "sm_86 built without NVIDIA image mounted" >&2
@@ -63,7 +63,7 @@ script='
         cat prelude.cl kernel.cl | gkcc --target "$t" -DSCALE=2.0f -I "$PWD" - -o "$t-stdin.o"
         gkcc --target "$t" --prelude prelude.cl -DSCALE=2.0f -S kernel.cl -o "$t.ptx"
         gkcc --target "$t" --ptxas --maxrregcount=32 "$t.ptx" -o "$t-ptx.o"
-        set -- "$@" "$t.o=$t" "$t-stdin.o=$t" "$t-ptx.o=$t"
+        set -- "$@" "$t.o=$t:smoke" "$t-stdin.o=$t:smoke" "$t-ptx.o=$t:smoke"
     done
     kobj_check "$@"
 '

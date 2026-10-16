@@ -73,3 +73,41 @@ def test_main_reports_mismatch(tmp_path, capsys):
     assert kobj_check.main([f"{obj}=gfx900"]) == 0
     assert kobj_check.main([f"{obj}=gfx1101"]) == 1
     assert "FAIL" in capsys.readouterr().out
+
+
+def _with_symbols(machine: int, flags: int, abiversion: int, names: list[str]) -> bytes:
+    """An ELF whose .symtab names each of names, its strings in .strtab."""
+    strtab = b"\0" + b"".join(n.encode() + b"\0" for n in names)
+    syms = bytes(24)  # the null symbol
+    pos = 1
+    for n in names:
+        syms += struct.pack("<IBBHQQ", pos, 0x12, 0, 1, 0, 0)
+        pos += len(n) + 1
+    data_off = 0x40 + 3 * 0x40
+    str_off, sym_off = data_off, data_off + len(strtab)
+
+    def sh(stype: int, off: int, size: int, link: int, entsize: int) -> bytes:
+        return struct.pack("<IIQQQQIIQQ", 0, stype, 0, 0, off, size, link, 0, 8, entsize)
+
+    shdrs = sh(0, 0, 0, 0, 0) + sh(3, str_off, len(strtab), 0, 0)
+    shdrs += sh(kobj_check.SHT_SYMTAB, sym_off, len(syms), 1, 24)
+    elf = bytearray(_elf(machine, flags, abiversion, sections=shdrs + strtab + syms))
+    struct.pack_into("<HH", elf, 0x3C, 3, 0)
+    return bytes(elf)
+
+
+def test_symbols():
+    obj = _with_symbols(kobj_check.EM_AMDGPU, 0x46, 4, ["saxpy", "saxpy.kd"])
+    assert kobj_check.symbols(obj) == {"", "saxpy", "saxpy.kd"}
+    assert kobj_check.check(obj, "gfx1101:saxpy") == "gfx1101:saxpy"
+    assert kobj_check.check(obj, "gfx1101:gemm") == "gfx1101 without gemm"
+    assert kobj_check.check(obj, "gfx900:saxpy") == "gfx1101:saxpy"
+    assert kobj_check.symbols(_elf(kobj_check.EM_CUDA, 0)) == set()
+
+
+def test_main_reports_missing_symbol(tmp_path, capsys):
+    obj = tmp_path / "k.cubin"
+    obj.write_bytes(_with_symbols(kobj_check.EM_CUDA, 0x6005604, 8, ["saxpy"]))
+    assert kobj_check.main([f"{obj}=sm_86:saxpy", f"{obj}=sm_86"]) == 0
+    assert kobj_check.main([f"{obj}=sm_86:gemm"]) == 1
+    assert "sm_86 without gemm" in capsys.readouterr().out

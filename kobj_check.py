@@ -6,12 +6,15 @@
 
 Reads each file's ELF header (and, for an Intel zebin, its
 ``.note.intelgt.compat`` notes) and names the device it is for, so a compiler
-that silently emitted something else is caught. No GPU and no vendor tool is
-needed to read them.
+that silently emitted something else is caught. A ``:SYMBOL`` after the
+target also requires that symbol in the file's symbol table, so an object
+that lost its kernel is caught too. No GPU and no vendor tool is needed to
+read them.
 
-    kobj_check out/sm_86.o=sm_86 out/gfx900.o=gfx900 out/dg2.o=dg2
+    kobj_check out/sm_86.o=sm_86 out/gfx900.o=gfx900:smoke out/dg2.o=dg2
 
-Exits non-zero, naming each mismatch, unless every file is for its target.
+Exits non-zero, naming each mismatch, unless every file is for its target
+and holds its symbol.
 """
 
 from __future__ import annotations
@@ -30,6 +33,7 @@ AMDGPU_MACH = {0x2C: "gfx900", 0x35: "gfx1012", 0x46: "gfx1101"}
 # PRODUCT_FAMILY values in the zebin's INTELGT_NOTE_PRODUCT_FAMILY (igfxfmid.h)
 INTELGT_PRODUCT = {1270: "dg2"}
 NT_INTELGT_PRODUCT_FAMILY = 1
+SHT_SYMTAB = 2
 
 
 class NotAKernelObject(ValueError):
@@ -79,6 +83,34 @@ def identify(data: bytes) -> str:
     raise NotAKernelObject(f"ELF machine {machine} is not a GPU")
 
 
+def symbols(data: bytes) -> set[str]:
+    """The names in an ELF64 file's .symtab, empty when it has none."""
+    shoff = struct.unpack_from("<Q", data, 0x28)[0]
+    shentsize, shnum = struct.unpack_from("<HH", data, 0x3A)
+    names: set[str] = set()
+    for i in range(shnum):
+        sh = shoff + i * shentsize
+        stype, _flags, _addr, off, size, link, _info, _align, entsize = struct.unpack_from(
+            "<IQQQQIIQQ", data, sh + 4
+        )
+        if stype != SHT_SYMTAB or not entsize:
+            continue
+        strtab = struct.unpack_from("<Q", data, shoff + link * shentsize + 0x18)[0]
+        for sym in range(off, off + size, entsize):
+            start = strtab + struct.unpack_from("<I", data, sym)[0]
+            names.add(data[start : data.index(b"\0", start)].decode(errors="replace"))
+    return names
+
+
+def check(data: bytes, want: str) -> str:
+    """What the object is, as want spells it: TARGET, or TARGET:SYMBOL."""
+    target, _, symbol = want.partition(":")
+    got = identify(data)
+    if symbol and got == target and symbol not in symbols(data):
+        return f"{got} without {symbol}"
+    return f"{got}:{symbol}" if symbol else got
+
+
 def main(argv: list[str]) -> int:
     if not argv:
         print(__doc__, file=sys.stderr)
@@ -87,7 +119,7 @@ def main(argv: list[str]) -> int:
     for arg in argv:
         path, _, want = arg.rpartition("=")
         try:
-            got = identify(Path(path).read_bytes())
+            got = check(Path(path).read_bytes(), want)
         except (OSError, NotAKernelObject, struct.error, ValueError) as exc:
             got = f"error: {exc}"
         ok = got == want
