@@ -61,6 +61,15 @@ script=$refuse'
     for t in $(gkcc --targets); do
         case $t in sm_*) continue ;; esac
         gkcc --target "$t" printf.cl -o "$t-printf.o"
+        case $t in
+        gfx*)
+            # __printf_alloc of ockl linked, not left to a loader that has none
+            if /opt/rocm/lib/llvm/bin/llvm-readelf -sW "$t-printf.o" | grep -q " UND __printf_alloc"; then
+                echo "$t: OpenCL C printf calls an undefined __printf_alloc" >&2
+                exit 1
+            fi
+            ;;
+        esac
         set -- "$@" "$t-printf.o=$t:say"
     done
     for t in $(gkcc --targets -x hip); do

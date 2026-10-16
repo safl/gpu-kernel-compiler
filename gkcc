@@ -248,8 +248,15 @@ gfx*)
         /opt/rocm/lib/llvm/bin/clang "${HIP[@]}" --offload-arch="$target" -mprintf-kind=buffered \
             "${opts[@]}" -c -o "$out" "$src"
     else
+        # clang lowers printf to calls of ockl's __printf_alloc after it
+        # has linked the device libraries, which leaves them undefined, so
+        # the lowered bitcode is compiled again with ockl linked
         /opt/rocm/lib/llvm/bin/clang "${CL[@]}" -target amdgcn-amd-amdhsa -mcpu="$target" \
-            "${opts[@]}" -c -o "$out" "$src"
+            "${opts[@]}" -c -emit-llvm -o "$tmp/kernel.bc" "$src"
+        /opt/rocm/lib/llvm/bin/clang -target amdgcn-amd-amdhsa -mcpu="$target" -O3 \
+            -Xclang -mlink-builtin-bitcode -Xclang /opt/rocm/amdgcn/bitcode/ockl.bc \
+            -Xclang -mlink-builtin-bitcode -Xclang /opt/rocm/amdgcn/bitcode/oclc_abi_version_500.bc \
+            -c -o "$out" "$tmp/kernel.bc"
     fi
     ;;
 *)
