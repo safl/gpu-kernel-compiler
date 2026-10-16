@@ -35,6 +35,7 @@ The input languages, `-x` or by the file's extension:
 | `cl`   | OpenCL C             | `.cl`, and the rest | all      |
 | `ptx`  | PTX                  | `.ptx`             | `sm_*`   |
 | `cuda` | CUDA C++ device code | `.cu`              | `sm_*`   |
+| `hip`  | HIP C++ device code  | `.hip`             | `sm_*`, `gfx*` |
 
 A target refuses a language it does not take, naming why.
 `gkcc --targets -x LANG` lists the targets that take `LANG`.
@@ -48,7 +49,7 @@ gkcc --manifest
 ```
 
 `IN` may be `-` for stdin. The defaults are `-cl-std=CL2.0 -O3` for `cl` and
-`-O3` for `cuda`.
+`-O3` for `cuda` and `hip`.
 
 | Option             | Meaning                                                              |
 |--------------------|----------------------------------------------------------------------|
@@ -70,6 +71,14 @@ to be found by name is `extern "C"`; otherwise its name is C++-mangled. The
 mounted CUDA is newer than clang 22 knows of, which clang compiles all the
 same, but clang does not define `__CUDACC_VER_MAJOR__` and lacks some of
 what nvcc's newest headers give, such as CUDA 12.8's `__nv_atomic_*`.
+
+HIP for a `gfx*` target is compiled by ROCm's clang, device code only, to
+the linked code object `hipcc --genco` makes. For an `sm_*` target it is
+what HIP on NVIDIA is, CUDA with HIP's headers, which take their
+`nvidia_detail` side, compiled as CUDA above. The headers are HIP's, from
+ROCm's `amdrocm-runtime-dev` package, and hipother's `nvidia_detail`, from
+the same ROCm release's source; nothing else of either package is in the
+image.
 
 `gkcc --manifest` prints what the image holds, one component a line: its
 name, its version, and what the tool reports of itself. The license texts of
@@ -129,5 +138,6 @@ publishes it from `main` as `latest` and as the commit.
 ## License
 
 BSD-3-Clause, see [LICENSE](LICENSE). The image also holds ROCm's LLVM
-(Apache-2.0 WITH LLVM-exception), ROCm's device libraries (NCSA), Intel's IGC
-and compute-runtime (MIT), and Ubuntu's packages under their own licenses.
+(Apache-2.0 WITH LLVM-exception), ROCm's device libraries (NCSA), HIP's
+headers (MIT), Intel's IGC and compute-runtime (MIT), and Ubuntu's packages
+under their own licenses.

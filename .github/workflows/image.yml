@@ -21,6 +21,7 @@ on:
       - Makefile
       - gkcc
       - kobj_check.py
+      - hipother.sha256
       - targets
       - nvidia-image
       - tests/**

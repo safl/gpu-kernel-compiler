@@ -25,6 +25,7 @@ or with -x those that take LANG.
                     cl    OpenCL C (.cl, and anything else), every target
                     ptx   PTX, what -S writes (.ptx), sm_*
                     cuda  CUDA C++ device code (.cu), sm_*
+                    hip   HIP C++ device code (.hip), sm_* and gfx*
 
   --prelude FILE  prepend FILE to the source; repeatable, in order. The
                   source's own directory stays on the include path.
@@ -35,8 +36,8 @@ or with -x those that take LANG.
                   ocloc's -internal_options.
   anything else   passed to clang as is (sm_* and gfx* only)
 
-The defaults are -cl-std=CL2.0 -O3 for cl and -O3 for cuda, which later
-options override. sm_* targets need NVIDIA's CUDA (ptxas, libdevice and
+The defaults are -cl-std=CL2.0 -O3 for cl and -O3 for cuda and hip, which
+later options override. sm_* targets need NVIDIA's CUDA (ptxas, libdevice and
 headers), which this image does not carry. Mount NVIDIA's image read-only
 at $nvidia_mount:
 
@@ -55,7 +56,8 @@ die() {
 # The input languages target $1 takes
 languages() {
     case $1 in
-    sm_*) echo cl ptx cuda ;;
+    sm_*) echo cl ptx cuda hip ;;
+    gfx*) echo cl hip ;;
     *) echo cl ;;
     esac
 }
@@ -97,15 +99,15 @@ fi
 grep -qx -- "$target" "$share/targets" ||
     die "no target $target; this image builds: $(tr '\n' ' ' <"$share/targets")"
 if [[ -z $lang ]]; then
-    case $src in *.ptx) lang=ptx ;; *.cu) lang=cuda ;; *) lang=cl ;; esac
+    case $src in *.ptx) lang=ptx ;; *.cu) lang=cuda ;; *.hip) lang=hip ;; *) lang=cl ;; esac
 fi
 case $lang in
-cl | ptx | cuda) ;;
-*) die "no input language $lang; gkcc takes cl, ptx and cuda" ;;
+cl | ptx | cuda | hip) ;;
+*) die "no input language $lang; gkcc takes cl, ptx, cuda and hip" ;;
 esac
 if [[ " $(languages "$target") " != *" $lang "* ]]; then
     case $lang in
-    cuda) die "-x cuda is for sm_* targets, CUDA being NVIDIA's" ;;
+    cuda) die "-x cuda is for sm_* targets, CUDA being NVIDIA's; for gfx*, write HIP (-x hip)" ;;
     *) die "-x $lang is not for $target, which takes: $(languages "$target")" ;;
     esac
 fi
@@ -126,6 +128,8 @@ fi
 CL=(-x cl -cl-std=CL2.0 -O3 -Xclang -finclude-default-header)
 # The CUDA in the pinned image is newer than clang knows of; it compiles it
 CUDA=(-x cuda --cuda-device-only -O3 -Wno-unknown-cuda-version)
+# The linked code object, as hipcc --genco makes, not an offload bundle
+HIP=(-x hip --cuda-device-only --no-gpu-bundle-output -O3)
 
 # The path of $1 in NVIDIA's CUDA under the mount, or why there is none
 nvidia_tool() {
@@ -162,12 +166,16 @@ sm_*)
             -Xclang -mlink-builtin-bitcode -Xclang "$libdevice" \
             "${opts[@]}" -S -o "$ptx" "$src"
         ;;
-    cuda)
+    cuda | hip)
         # clang finds libdevice under --cuda-path itself. nvcc puts CCCL
         # (cuda/std/...) on the include path from nvcc.profile; so must we.
+        # HIP on NVIDIA is CUDA with HIP's headers, which see clang's CUDA
+        # and take their nvidia_detail side.
         cuda=$(nvidia_tool include/cuda.h)
         cuda=${cuda%/include/*}
-        clang "${CUDA[@]}" --cuda-gpu-arch="$target" --cuda-path="$cuda" \
+        hip=()
+        [[ $lang == hip ]] && hip=(-isystem /opt/rocm/include)
+        clang "${CUDA[@]}" --cuda-gpu-arch="$target" --cuda-path="$cuda" "${hip[@]}" \
             -isystem "$cuda/include/cccl" "${opts[@]}" -S -o "$ptx" "$src"
         ;;
     esac
@@ -177,8 +185,13 @@ sm_*)
     fi
     ;;
 gfx*)
-    /opt/rocm/lib/llvm/bin/clang "${CL[@]}" -target amdgcn-amd-amdhsa -mcpu="$target" \
-        "${opts[@]}" -c -o "$out" "$src"
+    if [[ $lang == hip ]]; then
+        /opt/rocm/lib/llvm/bin/clang "${HIP[@]}" --offload-arch="$target" \
+            "${opts[@]}" -c -o "$out" "$src"
+    else
+        /opt/rocm/lib/llvm/bin/clang "${CL[@]}" -target amdgcn-amd-amdhsa -mcpu="$target" \
+            "${opts[@]}" -c -o "$out" "$src"
+    fi
     ;;
 *)
     options=(-cl-std=CL2.0) internal=()

@@ -30,7 +30,7 @@ $engine image inspect "$nvidia" >/dev/null 2>&1 || $engine pull -q "$nvidia" >/d
 # Runs $script in the image, without a network, in a directory holding tests/
 run() {
     # shellcheck disable=SC2016 # expanded inside the container
-    tar -C "$here" -cf - kernel.cl kernel.cu smoke.h prelude.cl |
+    tar -C "$here" -cf - kernel.cl kernel.cu kernel.hip smoke.h prelude.cl |
         $engine run --rm -i --network=none "$@" sh -euc 'cd "$(mktemp -d)" && tar -xf - && eval "$0"' "$script"
 }
 
@@ -49,11 +49,18 @@ refuse='
 script=$refuse'
     gkcc --manifest
     [ "$(gkcc --targets -x cuda)" = "$(gkcc --targets | grep "^sm_")" ]
+    [ "$(gkcc --targets -x hip)" = "$(gkcc --targets | grep -e "^sm_" -e "^gfx")" ]
     for t in $(gkcc --targets); do
         case $t in sm_*) continue ;; esac
         gkcc --target "$t" --prelude prelude.cl -DSCALE=2.0f kernel.cl -o "$t.o"
         cat prelude.cl kernel.cl | gkcc --target "$t" -D SCALE=2.0f -I "$PWD" - -o "$t-stdin.o"
         set -- "$@" "$t.o=$t:smoke" "$t-stdin.o=$t:smoke"
+    done
+    for t in $(gkcc --targets -x hip); do
+        case $t in sm_*) continue ;; esac
+        gkcc --target "$t" --prelude prelude.cl -DSCALE=2.0f kernel.hip -o "$t-hip.o"
+        cat prelude.cl kernel.hip | gkcc --target "$t" -x hip -DSCALE=2.0f - -o "$t-hip-stdin.o"
+        set -- "$@" "$t-hip.o=$t:smoke" "$t-hip-stdin.o=$t:smoke"
     done
     if gkcc --target sm_86 --prelude prelude.cl -DSCALE=2.0f kernel.cl -o sm_86.o 2>err; then
         echo "sm_86 built without NVIDIA image mounted" >&2
@@ -66,6 +73,8 @@ script=$refuse'
     refuse --target gfx900 -x spirv kernel.cl
     refuse --target gfx1101 -DSCALE=2.0f -DOFFSET=1.0f kernel.cu
     refuse --target dg2 -x cuda -DSCALE=2.0f -DOFFSET=1.0f kernel.cu
+    refuse --target dg2 -DSCALE=2.0f -DOFFSET=1.0f kernel.hip
+    refuse --target sm_120 -DSCALE=2.0f -DOFFSET=1.0f kernel.hip
     kobj_check "$@"
 '
 run -e NVIDIA="$nvidia" "$image"
@@ -86,6 +95,12 @@ script=$refuse'
         gkcc --target "$t" --prelude prelude.cl -DSCALE=2.0f -S kernel.cu -o "$t-cu.ptx"
         gkcc --target "$t" "$t-cu.ptx" -o "$t-cu-ptx.o"
         set -- "$@" "$t-cu.o=$t:smoke" "$t-cu-stdin.o=$t:smoke" "$t-cu-ptx.o=$t:smoke"
+    done
+    for t in $(gkcc --targets -x hip); do
+        case $t in sm_*) ;; *) continue ;; esac
+        gkcc --target "$t" --prelude prelude.cl -DSCALE=2.0f kernel.hip -o "$t-hip.o"
+        cat prelude.cl kernel.hip | gkcc --target "$t" -x hip -DSCALE=2.0f - -o "$t-hip-stdin.o"
+        set -- "$@" "$t-hip.o=$t:smoke" "$t-hip-stdin.o=$t:smoke"
     done
     kobj_check "$@"
 '
