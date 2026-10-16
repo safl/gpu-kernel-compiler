@@ -50,6 +50,7 @@ script=$refuse'
     gkcc --manifest
     [ "$(gkcc --targets -x cuda)" = "$(gkcc --targets | grep "^sm_")" ]
     [ "$(gkcc --targets -x hip)" = "$(gkcc --targets | grep -e "^sm_" -e "^gfx")" ]
+    [ "$(gkcc --targets -x spirv)" = "$(gkcc --targets | grep -v -e "^sm_" -e "^gfx")" ]
     for t in $(gkcc --targets); do
         case $t in sm_*) continue ;; esac
         gkcc --target "$t" --prelude prelude.cl -DSCALE=2.0f kernel.cl -o "$t.o"
@@ -62,6 +63,14 @@ script=$refuse'
         cat prelude.cl kernel.hip | gkcc --target "$t" -x hip -DSCALE=2.0f - -o "$t-hip-stdin.o"
         set -- "$@" "$t-hip.o=$t:smoke" "$t-hip-stdin.o=$t:smoke"
     done
+    # SPIR-V as an OpenCL compiler writes it, here the clang in the image
+    clang --target=spirv64 -cl-std=CL2.0 -O3 -Xclang -finclude-default-header \
+        -DSCALE=2.0f -include prelude.cl -c kernel.cl -o kernel.spv
+    for t in $(gkcc --targets -x spirv); do
+        gkcc --target "$t" kernel.spv -o "$t-spv.o"
+        gkcc --target "$t" -x spirv - -o "$t-spv-stdin.o" <kernel.spv
+        set -- "$@" "$t-spv.o=$t:smoke" "$t-spv-stdin.o=$t:smoke"
+    done
     if gkcc --target sm_86 --prelude prelude.cl -DSCALE=2.0f kernel.cl -o sm_86.o 2>err; then
         echo "sm_86 built without NVIDIA image mounted" >&2
         exit 1
@@ -70,7 +79,11 @@ script=$refuse'
     grep -qF -- "--mount type=image,src=$NVIDIA,dst=/opt/nvidia" err
     refuse --target sm_86 -DSCALE=2.0f -DOFFSET=1.0f kernel.cu
     grep -qF -- "--mount type=image,src=$NVIDIA,dst=/opt/nvidia" refused.err
-    refuse --target gfx900 -x spirv kernel.cl
+    refuse --target gfx900 kernel.spv
+    refuse --target sm_86 kernel.spv
+    refuse --target dg2 --prelude prelude.cl kernel.spv
+    refuse --target dg2 -DSCALE=2.0f kernel.spv
+    refuse --target dg2 -x fortran kernel.cl
     refuse --target gfx1101 -DSCALE=2.0f -DOFFSET=1.0f kernel.cu
     refuse --target dg2 -x cuda -DSCALE=2.0f -DOFFSET=1.0f kernel.cu
     refuse --target dg2 -DSCALE=2.0f -DOFFSET=1.0f kernel.hip

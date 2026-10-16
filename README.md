@@ -30,12 +30,13 @@ ghcr.io/safl/gpu-kernel-compiler
 
 The input languages, `-x` or by the file's extension:
 
-| `-x`   | Language             | Extension          | Targets  |
-|--------|----------------------|--------------------|----------|
-| `cl`   | OpenCL C             | `.cl`, and the rest | all      |
-| `ptx`  | PTX                  | `.ptx`             | `sm_*`   |
-| `cuda` | CUDA C++ device code | `.cu`              | `sm_*`   |
-| `hip`  | HIP C++ device code  | `.hip`             | `sm_*`, `gfx*` |
+| `-x`    | Language             | Extension           | Targets        |
+|---------|----------------------|---------------------|----------------|
+| `cl`    | OpenCL C             | `.cl`, and the rest | all            |
+| `ptx`   | PTX                  | `.ptx`              | `sm_*`         |
+| `cuda`  | CUDA C++ device code | `.cu`               | `sm_*`         |
+| `hip`   | HIP C++ device code  | `.hip`              | `sm_*`, `gfx*` |
+| `spirv` | OpenCL SPIR-V        | `.spv`              | `dg2`          |
 
 A target refuses a language it does not take, naming why.
 `gkcc --targets -x LANG` lists the targets that take `LANG`.
@@ -53,9 +54,9 @@ gkcc --manifest
 
 | Option             | Meaning                                                              |
 |--------------------|----------------------------------------------------------------------|
-| `-DNAME[=VAL]`, `-IDIR`, `-cl-*` | build options, for every target                   |
+| `-DNAME[=VAL]`, `-IDIR`, `-cl-*` | build options, for every target; only `-cl-*` for `spirv` |
 | `-cl-intel-*`      | to `ocloc`'s `-internal_options`, for `dg2`                          |
-| `--prelude FILE`   | prepended to the source, repeatable; `IN`'s directory stays on the include path |
+| `--prelude FILE`   | prepended to the source, repeatable, not for `spirv`; `IN`'s directory stays on the include path |
 | `-x LANG`          | the input language, see above                                        |
 | `-S`               | `sm_*`: stop at PTX, which `gkcc` assembles when given back          |
 | `--ptxas OPT`      | `sm_*`: passed to `ptxas`, repeatable                                |
@@ -79,6 +80,17 @@ what HIP on NVIDIA is, CUDA with HIP's headers, which take their
 ROCm's `amdrocm-runtime-dev` package, and hipother's `nvidia_detail`, from
 the same ROCm release's source; nothing else of either package is in the
 image.
+
+SPIR-V, as an OpenCL compiler writes it, is compiled by `ocloc` for `dg2`.
+It is not implemented for `gfx*` and `sm_*`. The way there would be
+SPIRV-LLVM-Translator, SPIR-V to LLVM IR, then clang for the target, but the
+IR the translator writes keeps SPIR's address spaces and calling
+conventions: amdgcn rejects it, and nvptx compiles it wrong, loading a
+generic pointer as constant memory and emitting the kernel as a plain
+function. ROCm 10.1's translator can remap the address spaces
+(`--spirv-addrspace-map`) but not retarget the module; Ubuntu's
+`llvm-spirv-21` can do neither. `--spirv-target-triple`, which retargets it
+for amdgcn, is in newer translators than either.
 
 `gkcc --manifest` prints what the image holds, one component a line: its
 name, its version, and what the tool reports of itself. The license texts of

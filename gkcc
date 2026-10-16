@@ -26,14 +26,16 @@ or with -x those that take LANG.
                     ptx   PTX, what -S writes (.ptx), sm_*
                     cuda  CUDA C++ device code (.cu), sm_*
                     hip   HIP C++ device code (.hip), sm_* and gfx*
+                    spirv OpenCL SPIR-V (.spv), dg2
 
-  --prelude FILE  prepend FILE to the source; repeatable, in order. The
-                  source's own directory stays on the include path.
+  --prelude FILE  prepend FILE to the source, not for spirv; repeatable,
+                  in order. The source's own directory stays on the
+                  include path.
   --ptxas OPT     pass OPT to ptxas (sm_* only); repeatable
   -S              sm_* only: stop at PTX, to be edited and passed back
   -DNAME[=VAL], -IDIR, -cl-*
-                  build options, for every target. -cl-intel-* go to
-                  ocloc's -internal_options.
+                  build options, for every target; for spirv, -cl-*
+                  only. -cl-intel-* go to ocloc's -internal_options.
   anything else   passed to clang as is (sm_* and gfx* only)
 
 The defaults are -cl-std=CL2.0 -O3 for cl and -O3 for cuda and hip, which
@@ -58,7 +60,7 @@ languages() {
     case $1 in
     sm_*) echo cl ptx cuda hip ;;
     gfx*) echo cl hip ;;
-    *) echo cl ;;
+    *) echo cl spirv ;;
     esac
 }
 
@@ -99,20 +101,35 @@ fi
 grep -qx -- "$target" "$share/targets" ||
     die "no target $target; this image builds: $(tr '\n' ' ' <"$share/targets")"
 if [[ -z $lang ]]; then
-    case $src in *.ptx) lang=ptx ;; *.cu) lang=cuda ;; *.hip) lang=hip ;; *) lang=cl ;; esac
+    case $src in
+    *.ptx) lang=ptx ;;
+    *.cu) lang=cuda ;;
+    *.hip) lang=hip ;;
+    *.spv) lang=spirv ;;
+    *) lang=cl ;;
+    esac
 fi
 case $lang in
-cl | ptx | cuda | hip) ;;
-*) die "no input language $lang; gkcc takes cl, ptx, cuda and hip" ;;
+cl | ptx | cuda | hip | spirv) ;;
+*) die "no input language $lang; gkcc takes cl, ptx, cuda, hip and spirv" ;;
 esac
 if [[ " $(languages "$target") " != *" $lang "* ]]; then
     case $lang in
     cuda) die "-x cuda is for sm_* targets, CUDA being NVIDIA's; for gfx*, write HIP (-x hip)" ;;
+    # The translators can turn SPIR-V into LLVM IR, but not lower OpenCL's
+    # address spaces and kernels to amdgcn's or nvptx's (see README.md)
+    spirv) die "-x spirv is for dg2 only; SPIR-V for $target is not implemented" ;;
     *) die "-x $lang is not for $target, which takes: $(languages "$target")" ;;
     esac
 fi
 if [[ $target != sm_* ]] && ((asm || ${#ptxas_opts[@]})); then
     die "-S and --ptxas are for sm_* targets only"
+fi
+if [[ $lang == spirv ]]; then
+    ((${#preludes[@]} == 0)) || die "--prelude is for source languages, not SPIR-V"
+    for o in "${opts[@]}"; do
+        case $o in -D* | -I*) die "$o is a source option; SPIR-V is compiled already" ;; esac
+    done
 fi
 
 tmp=$(mktemp -d)
@@ -194,7 +211,12 @@ gfx*)
     fi
     ;;
 *)
-    options=(-cl-std=CL2.0) internal=()
+    options=() internal=() spirv=()
+    if [[ $lang == spirv ]]; then
+        spirv=(-spirv_input)
+    else
+        options=(-cl-std=CL2.0)
+    fi
     for ((i = 0; i < ${#opts[@]}; i++)); do
         case ${opts[i]} in
         -D | -I) options+=("${opts[i]}${opts[i + 1]}") && i=$((i + 1)) ;;
@@ -204,7 +226,8 @@ gfx*)
         esac
     done
     # ocloc names its output after -output, in -out_dir, with the SPIR-V beside it
-    ocloc compile -q -device "$target" -file "$src" -options "${options[*]}" \
+    ocloc compile -q -device "$target" "${spirv[@]}" -file "$src" \
+        ${options[@]+-options "${options[*]}"} \
         ${internal[@]+-internal_options "${internal[*]}"} \
         -output kernel -output_no_suffix -out_dir "$tmp"
     mv "$tmp/kernel.bin" "$out"
