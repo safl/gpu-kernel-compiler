@@ -30,7 +30,7 @@ $engine image inspect "$nvidia" >/dev/null 2>&1 || $engine pull -q "$nvidia" >/d
 # Runs $script in the image, without a network, in a directory holding tests/
 run() {
     # shellcheck disable=SC2016 # expanded inside the container
-    tar -C "$here" -cf - kernel.cl kernel.cu kernel.hip smoke.h prelude.cl |
+    tar -C "$here" -cf - kernel.cl kernel.cu kernel.hip smoke.h prelude.cl printf.cl printf.hip |
         $engine run --rm -i --network=none "$@" sh -euc 'cd "$(mktemp -d)" && tar -xf - && eval "$0"' "$script"
 }
 
@@ -56,6 +56,20 @@ script=$refuse'
         gkcc --target "$t" --prelude prelude.cl -DSCALE=2.0f kernel.cl -o "$t.o"
         cat prelude.cl kernel.cl | gkcc --target "$t" -D SCALE=2.0f -I "$PWD" - -o "$t-stdin.o"
         set -- "$@" "$t.o=$t:smoke" "$t-stdin.o=$t:smoke"
+    done
+    # printf, which HIP on gfx* puts in the printf buffer, not through the host call buffer
+    for t in $(gkcc --targets); do
+        case $t in sm_*) continue ;; esac
+        gkcc --target "$t" printf.cl -o "$t-printf.o"
+        set -- "$@" "$t-printf.o=$t:say"
+    done
+    for t in $(gkcc --targets -x hip); do
+        case $t in sm_*) continue ;; esac
+        gkcc --target "$t" printf.hip -o "$t-printf-hip.o"
+        /opt/rocm/lib/llvm/bin/llvm-readelf --notes "$t-printf-hip.o" >notes
+        grep -q hidden_printf_buffer notes
+        if grep -q hidden_hostcall_buffer notes; then echo "$t: HIP printf through the host call buffer" >&2; exit 1; fi
+        set -- "$@" "$t-printf-hip.o=$t:say"
     done
     for t in $(gkcc --targets -x hip); do
         case $t in sm_*) continue ;; esac
@@ -113,6 +127,15 @@ script=$refuse'
         gkcc --target "$t" --prelude prelude.cl -DSCALE=2.0f -S kernel.cl -o "$t.ptx"
         gkcc --target "$t" --ptxas --maxrregcount=32 "$t.ptx" -o "$t-ptx.o"
         set -- "$@" "$t.o=$t:smoke" "$t-stdin.o=$t:smoke" "$t-ptx.o=$t:smoke"
+    done
+    # OpenCL C printf, a call of vprintf through the shim gkcc links, which the cubin leaves to the driver
+    for t in $(gkcc --targets); do
+        case $t in sm_*) ;; *) continue ;; esac
+        gkcc --target "$t" printf.cl -o "$t-printf.o"
+        gkcc --target "$t" -S printf.cl -o "$t-printf.ptx"
+        grep -q "call.uni (retval0), vprintf," "$t-printf.ptx"
+        if grep -qE "^\\.extern \\.func.* printf$" "$t-printf.ptx"; then echo "$t: printf left unresolved" >&2; exit 1; fi
+        set -- "$@" "$t-printf.o=$t:say"
     done
     for t in $(gkcc --targets -x cuda); do
         gkcc --target "$t" --prelude prelude.cl -DSCALE=2.0f kernel.cu -o "$t-cu.o"

@@ -137,6 +137,7 @@ RUN d=/usr/share/gpu-kernel-compiler/licenses && mkdir -p "$d" && cd "$d" \
 
 COPY LICENSE /usr/share/gpu-kernel-compiler/licenses/gpu-kernel-compiler-LICENSE
 COPY targets nvidia-image /usr/share/gpu-kernel-compiler/
+COPY shims /usr/share/gpu-kernel-compiler/shims
 COPY gkcc /usr/local/bin/gkcc
 COPY kobj_check.py /usr/local/bin/kobj_check
 

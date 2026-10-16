@@ -43,7 +43,9 @@ lists the targets, or with -x those that take LANG.
   anything else   passed to clang, or nvcc, as is (sm_* and gfx* only)
 
 The defaults are -cl-std=CL2.0 -O3 for cl and -O3 for cuda and hip, which
-later options override. sm_* targets need NVIDIA's CUDA (ptxas, libdevice,
+later options override, and for hip on gfx* -mprintf-kind=buffered, printf
+into the kernel's printf buffer rather than calls to the host. OpenCL C's
+printf on sm_* calls vprintf, through a shim gkcc links (shims/). sm_* targets need NVIDIA's CUDA (ptxas, libdevice,
 headers and nvcc), which this image does not carry. Mount NVIDIA's image
 read-only at $nvidia_mount:
 
@@ -199,9 +201,14 @@ sm_*)
         # its own work-item functions, and libdevice's __nv_* math is linked.
         # --cuda-path tells clang the CUDA version, which sets the PTX version;
         # without it, clang's default lacks e.g. the warp shuffles.
+        # nor any printf: OpenCL's, which clang lowers to a call of printf
+        # with constant-space strings, is shims/nvptx_printf.c's, calling vprintf
+        clang -x c -std=c11 --target=nvptx64-nvidia-cuda -march="$target" --cuda-path="${libdevice%/nvvm/*}" -O2 -fno-builtin \
+            -emit-llvm -c -o "$tmp/printf.bc" "$share/shims/nvptx_printf.c"
         clang "${CL[@]}" -target nvptx64-nvidia-cuda -march="$target" \
             --cuda-path="${libdevice%/nvvm/*}" \
             -Xclang -mlink-builtin-bitcode -Xclang "$libdevice" \
+            -Xclang -mlink-builtin-bitcode -Xclang "$tmp/printf.bc" \
             "${opts[@]}" -S -o "$ptx" "$src"
         ;;
     cuda | hip)
@@ -236,7 +243,9 @@ emu)
     ;;
 gfx*)
     if [[ $lang == hip ]]; then
-        /opt/rocm/lib/llvm/bin/clang "${HIP[@]}" --offload-arch="$target" \
+        # printf into the buffer the kernarg's hidden_printf_buffer names,
+        # as OpenCL C's does, rather than calls to the host
+        /opt/rocm/lib/llvm/bin/clang "${HIP[@]}" --offload-arch="$target" -mprintf-kind=buffered \
             "${opts[@]}" -c -o "$out" "$src"
     else
         /opt/rocm/lib/llvm/bin/clang "${CL[@]}" -target amdgcn-amd-amdhsa -mcpu="$target" \
