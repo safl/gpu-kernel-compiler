@@ -2,15 +2,18 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 #
-# OpenCL C to device code for AMD, Intel and NVIDIA GPUs, no GPU needed:
+# GPU kernels to device code for AMD, Intel and NVIDIA GPUs, no GPU needed:
 # ROCm's clang and device libraries, Intel's ocloc and IGC, and LLVM's clang
-# for nvptx64. Nothing of NVIDIA's is in it; gkcc runs ptxas and
-# libdevice from NVIDIA's own image, mounted at run time (see README.md).
+# for nvptx64. Nothing of NVIDIA's is in it; gkcc runs ptxas and libdevice,
+# and reads CUDA's headers, from NVIDIA's own image, mounted at run time
+# (see README.md).
 
 FROM docker.io/library/ubuntu:26.04@sha256:88a381d5b5eeb2b35d3ad70925a362c37ce569daf43ede89ff818ec20e4d3794
 
-ARG CLANG_MAJOR=21
-ARG CLANG_VERSION=1:21.1.8-6ubuntu1
+# clang compiles CUDA with the headers of the CUDA it is given, those of the
+# NVIDIA image nvidia-image pins; clang 21 cannot parse CUDA 13's, 22 can.
+ARG CLANG_MAJOR=22
+ARG CLANG_VERSION=1:22.1.2-1ubuntu1
 
 # AMD's TheRock-based ROCm packages; rocmradeon 26.16 is the first with a
 # release (not ~pre) build for resolute.
@@ -116,12 +119,12 @@ RUN isas=$(find /opt/rocm/lib/llvm/amdgcn/bitcode -name 'oclc_isa_version_*.bc' 
         rocm-device-libs "$rocm (${isas% })" \
         igc "$(dpkg-query -W -f '${Version}' intel-igc-core-2)" \
         ocloc "$(dpkg-query -W -f '${Version}' intel-ocloc)" \
-        nvidia "not in the image; mounted at run time from $(cat /usr/share/gpu-kernel-compiler/nvidia-image)" \
+        nvidia "not in the image; ptxas, libdevice and CUDA headers mounted at run time from $(cat /usr/share/gpu-kernel-compiler/nvidia-image)" \
     > /usr/share/gpu-kernel-compiler/manifest \
  && cat /usr/share/gpu-kernel-compiler/manifest
 
 LABEL org.opencontainers.image.title="gpu-kernel-compiler" \
-      org.opencontainers.image.description="OpenCL C to device code for AMD, Intel and NVIDIA GPUs; NVIDIA's tools mounted at run time" \
+      org.opencontainers.image.description="GPU kernels to device code for AMD, Intel and NVIDIA GPUs; NVIDIA's tools mounted at run time" \
       org.opencontainers.image.source="https://github.com/safl/gpu-kernel-compiler" \
       org.opencontainers.image.licenses="BSD-3-Clause AND Apache-2.0 WITH LLVM-exception AND NCSA AND MIT"
 

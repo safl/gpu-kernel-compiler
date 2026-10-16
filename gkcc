@@ -5,7 +5,7 @@
 #
 # gkcc, the GPU kernel compiler driver: the image's one entry point. A kernel
 # source in, device code for one target out, whichever vendor's toolchain
-# that target takes.
+# that target and language take.
 set -euo pipefail
 
 share=/usr/share/gpu-kernel-compiler
@@ -15,27 +15,30 @@ nvidia_image=$(cat "$share/nvidia-image")
 usage() {
     cat >&2 <<EOF
 usage: gkcc --target TARGET [OPTION...] IN -o OUT
-       gkcc --targets | --manifest
+       gkcc --targets [-x LANG] | --manifest
 
 Compiles IN ('-' reads stdin) for TARGET into OUT: a cubin for sm_*, an
-AMD code object for gfx*, a zebin for dg2.
+AMD code object for gfx*, a zebin for dg2. --targets lists the targets,
+or with -x those that take LANG.
 
-  -x LANG         the input language: cl, OpenCL C, the default; or ptx,
-                  for sm_* only, what -S writes, the default for IN.ptx.
-                  Other languages, such as SPIR-V, may come later.
+  -x LANG         the input language, by default from IN's extension:
+                    cl    OpenCL C (.cl, and anything else), every target
+                    ptx   PTX, what -S writes (.ptx), sm_*
+                    cuda  CUDA C++ device code (.cu), sm_*
 
   --prelude FILE  prepend FILE to the source; repeatable, in order. The
                   source's own directory stays on the include path.
   --ptxas OPT     pass OPT to ptxas (sm_* only); repeatable
   -S              sm_* only: stop at PTX, to be edited and passed back
   -DNAME[=VAL], -IDIR, -cl-*
-                  OpenCL build options, for every target. -cl-intel-*
-                  go to ocloc's -internal_options.
+                  build options, for every target. -cl-intel-* go to
+                  ocloc's -internal_options.
   anything else   passed to clang as is (sm_* and gfx* only)
 
-The defaults are -cl-std=CL2.0 -O3, which later options override.
-sm_* targets need NVIDIA's ptxas and libdevice, which this image does not
-carry. Mount NVIDIA's image read-only at $nvidia_mount:
+The defaults are -cl-std=CL2.0 -O3 for cl and -O3 for cuda, which later
+options override. sm_* targets need NVIDIA's CUDA (ptxas, libdevice and
+headers), which this image does not carry. Mount NVIDIA's image read-only
+at $nvidia_mount:
 
   --mount type=image,src=$nvidia_image,dst=$nvidia_mount
 
@@ -49,11 +52,19 @@ die() {
     exit 1
 }
 
-target="" src="" out="" lang="" asm=0
+# The input languages target $1 takes
+languages() {
+    case $1 in
+    sm_*) echo cl ptx cuda ;;
+    *) echo cl ;;
+    esac
+}
+
+target="" src="" out="" lang="" asm=0 list=0
 preludes=() opts=() ptxas_opts=()
 while (($#)); do
     case $1 in
-    --targets) exec cat "$share/targets" ;;
+    --targets) list=1 ;;
     --manifest) exec cat "$share/manifest" ;;
     -h | --help) usage 0 ;;
     --target=*) target=${1#*=} ;;
@@ -76,17 +87,28 @@ while (($#)); do
     esac
     shift
 done
+if ((list)); then
+    while read -r t; do
+        if [[ -z $lang || " $(languages "$t") " == *" $lang "* ]]; then echo "$t"; fi
+    done <"$share/targets"
+    exit 0
+fi
 [[ -n $target && -n $src && -n $out ]] || usage
 grep -qx -- "$target" "$share/targets" ||
     die "no target $target; this image builds: $(tr '\n' ' ' <"$share/targets")"
 if [[ -z $lang ]]; then
-    case $src in *.ptx) lang=ptx ;; *) lang=cl ;; esac
+    case $src in *.ptx) lang=ptx ;; *.cu) lang=cuda ;; *) lang=cl ;; esac
 fi
 case $lang in
-cl) ;;
-ptx) [[ $target == sm_* ]] || die "-x ptx is for sm_* targets only" ;;
-*) die "no input language $lang; gkcc takes OpenCL C (-x cl), and PTX (-x ptx) for sm_*" ;;
+cl | ptx | cuda) ;;
+*) die "no input language $lang; gkcc takes cl, ptx and cuda" ;;
 esac
+if [[ " $(languages "$target") " != *" $lang "* ]]; then
+    case $lang in
+    cuda) die "-x cuda is for sm_* targets, CUDA being NVIDIA's" ;;
+    *) die "-x $lang is not for $target, which takes: $(languages "$target")" ;;
+    esac
+fi
 if [[ $target != sm_* ]] && ((asm || ${#ptxas_opts[@]})); then
     die "-S and --ptxas are for sm_* targets only"
 fi
@@ -102,6 +124,8 @@ if ((${#preludes[@]})) || [[ $src == - ]]; then
 fi
 
 CL=(-x cl -cl-std=CL2.0 -O3 -Xclang -finclude-default-header)
+# The CUDA in the pinned image is newer than clang knows of; it compiles it
+CUDA=(-x cuda --cuda-device-only -O3 -Wno-unknown-cuda-version)
 
 # The path of $1 in NVIDIA's CUDA under the mount, or why there is none
 nvidia_tool() {
@@ -109,7 +133,7 @@ nvidia_tool() {
     for cuda in "$nvidia_mount"/usr/local/cuda-*; do :; done
     tool=$cuda/$1
     if [[ ! -e $tool ]]; then
-        die "$target needs NVIDIA's ptxas and libdevice, which this image does not carry." \
+        die "$target needs NVIDIA's CUDA (ptxas, libdevice and headers), which this image does not carry." \
             "Add NVIDIA's image as a read-only mount:"$'\n'"  --mount type=image,src=$nvidia_image,dst=$nvidia_mount"
     fi
     if [[ $1 == bin/ptxas ]] && ! err=$("$tool" --version 2>&1); then
@@ -122,10 +146,13 @@ nvidia_tool() {
 case $target in
 sm_*)
     ptx=$src
-    if [[ $lang == cl ]]; then
-        libdevice=$(nvidia_tool nvvm/libdevice/libdevice.10.bc)
+    if [[ $lang != ptx ]]; then
         ptx=$tmp/kernel.ptx
         ((asm)) && ptx=$out
+    fi
+    case $lang in
+    cl)
+        libdevice=$(nvidia_tool nvvm/libdevice/libdevice.10.bc)
         # clang has no OpenCL builtin library for nvptx64: a kernel brings
         # its own work-item functions, and libdevice's __nv_* math is linked.
         # --cuda-path tells clang the CUDA version, which sets the PTX version;
@@ -134,7 +161,16 @@ sm_*)
             --cuda-path="${libdevice%/nvvm/*}" \
             -Xclang -mlink-builtin-bitcode -Xclang "$libdevice" \
             "${opts[@]}" -S -o "$ptx" "$src"
-    fi
+        ;;
+    cuda)
+        # clang finds libdevice under --cuda-path itself. nvcc puts CCCL
+        # (cuda/std/...) on the include path from nvcc.profile; so must we.
+        cuda=$(nvidia_tool include/cuda.h)
+        cuda=${cuda%/include/*}
+        clang "${CUDA[@]}" --cuda-gpu-arch="$target" --cuda-path="$cuda" \
+            -isystem "$cuda/include/cccl" "${opts[@]}" -S -o "$ptx" "$src"
+        ;;
+    esac
     if ((!asm)); then
         ptxas=$(nvidia_tool bin/ptxas)
         "$ptxas" -arch="$target" "${ptxas_opts[@]}" -o "$out" "$ptx"

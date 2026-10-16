@@ -4,9 +4,11 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # Smoke-test a built image, no GPU needed: it must build exactly the targets
-# ./targets lists; kernel.cl compiled for each, by file and by stdin, must be
-# device code for that target; an sm_* target must fail without NVIDIA's
-# image mounted, naming the mount, and build with it, also through PTX.
+# ./targets lists; the kernel in each language compiled for each target that
+# takes it, by file and by stdin, must be device code for that target holding
+# the kernel; a language a target does not take must be refused; an sm_*
+# target must fail without NVIDIA's image mounted, naming the mount, and
+# build with it, also through PTX.
 #
 #   tests/smoke.sh IMAGE
 set -eu
@@ -28,13 +30,25 @@ $engine image inspect "$nvidia" >/dev/null 2>&1 || $engine pull -q "$nvidia" >/d
 # Runs $script in the image, without a network, in a directory holding tests/
 run() {
     # shellcheck disable=SC2016 # expanded inside the container
-    tar -C "$here" -cf - kernel.cl smoke.h prelude.cl |
+    tar -C "$here" -cf - kernel.cl kernel.cu smoke.h prelude.cl |
         $engine run --rm -i --network=none "$@" sh -euc 'cd "$(mktemp -d)" && tar -xf - && eval "$0"' "$script"
 }
 
+# What each script starts with: refuse ARG... fails unless gkcc ARG... does
+refuse='
+    refuse() {
+        if gkcc "$@" -o refused.o 2>refused.err; then
+            echo "gkcc $* was accepted" >&2
+            exit 1
+        fi
+        cat refused.err
+    }
+'
+
 # shellcheck disable=SC2016 # expanded inside the container
-script='
+script=$refuse'
     gkcc --manifest
+    [ "$(gkcc --targets -x cuda)" = "$(gkcc --targets | grep "^sm_")" ]
     for t in $(gkcc --targets); do
         case $t in sm_*) continue ;; esac
         gkcc --target "$t" --prelude prelude.cl -DSCALE=2.0f kernel.cl -o "$t.o"
@@ -46,17 +60,18 @@ script='
         exit 1
     fi
     cat err
-    if gkcc --target gfx900 -x spirv kernel.cl -o x.o; then
-        echo "-x spirv accepted, which gkcc does not take yet" >&2
-        exit 1
-    fi
     grep -qF -- "--mount type=image,src=$NVIDIA,dst=/opt/nvidia" err
+    refuse --target sm_86 -DSCALE=2.0f -DOFFSET=1.0f kernel.cu
+    grep -qF -- "--mount type=image,src=$NVIDIA,dst=/opt/nvidia" refused.err
+    refuse --target gfx900 -x spirv kernel.cl
+    refuse --target gfx1101 -DSCALE=2.0f -DOFFSET=1.0f kernel.cu
+    refuse --target dg2 -x cuda -DSCALE=2.0f -DOFFSET=1.0f kernel.cu
     kobj_check "$@"
 '
 run -e NVIDIA="$nvidia" "$image"
 
 # shellcheck disable=SC2016
-script='
+script=$refuse'
     for t in $(gkcc --targets); do
         case $t in sm_*) ;; *) continue ;; esac
         gkcc --target "$t" --prelude prelude.cl -DSCALE=2.0f kernel.cl -o "$t.o"
@@ -64,6 +79,13 @@ script='
         gkcc --target "$t" --prelude prelude.cl -DSCALE=2.0f -S kernel.cl -o "$t.ptx"
         gkcc --target "$t" --ptxas --maxrregcount=32 "$t.ptx" -o "$t-ptx.o"
         set -- "$@" "$t.o=$t:smoke" "$t-stdin.o=$t:smoke" "$t-ptx.o=$t:smoke"
+    done
+    for t in $(gkcc --targets -x cuda); do
+        gkcc --target "$t" --prelude prelude.cl -DSCALE=2.0f kernel.cu -o "$t-cu.o"
+        cat prelude.cl kernel.cu | gkcc --target "$t" -x cuda -DSCALE=2.0f - -o "$t-cu-stdin.o"
+        gkcc --target "$t" --prelude prelude.cl -DSCALE=2.0f -S kernel.cu -o "$t-cu.ptx"
+        gkcc --target "$t" "$t-cu.ptx" -o "$t-cu-ptx.o"
+        set -- "$@" "$t-cu.o=$t:smoke" "$t-cu-stdin.o=$t:smoke" "$t-cu-ptx.o=$t:smoke"
     done
     kobj_check "$@"
 '
