@@ -91,6 +91,11 @@ ROCm's `amdrocm-runtime-dev` package, and hipother's `nvidia_detail`, from
 the same ROCm release's source; nothing else of either package is in the
 image.
 
+OpenCL C for a `gfx*` target is linked the same way, by ROCm's `ld.lld
+-shared`, into a shared object of loadable segments, so a loader places it
+by its segments, the references between its code and its data already
+resolved, rather than linking it itself.
+
 SPIR-V, as an OpenCL compiler writes it, is compiled by `ocloc` for `dg2`.
 It is not implemented for `gfx*` and `sm_*`. The way there would be
 SPIRV-LLVM-Translator, SPIR-V to LLVM IR, then clang for the target, but the

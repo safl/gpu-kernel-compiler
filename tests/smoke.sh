@@ -57,6 +57,14 @@ script=$refuse'
         cat prelude.cl kernel.cl | gkcc --target "$t" -D SCALE=2.0f -I "$PWD" - -o "$t-stdin.o"
         set -- "$@" "$t.o=$t:smoke" "$t-stdin.o=$t:smoke"
     done
+    # OpenCL C on gfx* linked as HIP is, a shared object of loadable segments, not a relocatable object
+    for t in $(gkcc --targets -x hip); do
+        case $t in sm_*) continue ;; esac
+        /opt/rocm/lib/llvm/bin/llvm-readelf -h "$t.o" | grep -q "Type: *DYN" ||
+            { echo "$t: OpenCL C is not linked as a shared object" >&2; exit 1; }
+        /opt/rocm/lib/llvm/bin/llvm-readelf -lW "$t.o" | grep -q "^ *LOAD .* R E " ||
+            { echo "$t: OpenCL C has no loadable code segment" >&2; exit 1; }
+    done
     # printf, which HIP on gfx* puts in the printf buffer, not through the host call buffer
     for t in $(gkcc --targets); do
         case $t in sm_*) continue ;; esac

@@ -17,8 +17,9 @@ usage() {
 usage: gkcc --target TARGET [OPTION...] IN -o OUT
        gkcc --targets [-x LANG] | --manifest
 
-Compiles IN ('-' reads stdin) for TARGET into OUT: a cubin for sm_*, an
-AMD code object for gfx*, a zebin for dg2, SPIR-V 1.2 for emu. --targets
+Compiles IN ('-' reads stdin) for TARGET into OUT: a cubin for sm_*, a
+linked AMD code object (ET_DYN) for gfx*, a zebin for dg2, SPIR-V 1.2 for
+emu. --targets
 lists the targets, or with -x those that take LANG.
 
   -x LANG         the input language, by default from IN's extension:
@@ -250,13 +251,16 @@ gfx*)
     else
         # clang lowers printf to calls of ockl's __printf_alloc after it
         # has linked the device libraries, which leaves them undefined, so
-        # the lowered bitcode is compiled again with ockl linked
+        # the lowered bitcode is compiled again with ockl linked; then
+        # linked, as HIP's is, into the code object a loader places by its
+        # segments, every reference between its sections resolved
         /opt/rocm/lib/llvm/bin/clang "${CL[@]}" -target amdgcn-amd-amdhsa -mcpu="$target" \
             "${opts[@]}" -c -emit-llvm -o "$tmp/kernel.bc" "$src"
         /opt/rocm/lib/llvm/bin/clang -target amdgcn-amd-amdhsa -mcpu="$target" -O3 \
             -Xclang -mlink-builtin-bitcode -Xclang /opt/rocm/amdgcn/bitcode/ockl.bc \
             -Xclang -mlink-builtin-bitcode -Xclang /opt/rocm/amdgcn/bitcode/oclc_abi_version_500.bc \
-            -c -o "$out" "$tmp/kernel.bc"
+            -c -o "$tmp/kernel.o" "$tmp/kernel.bc"
+        /opt/rocm/lib/llvm/bin/ld.lld -shared -o "$out" "$tmp/kernel.o"
     fi
     ;;
 *)
