@@ -40,7 +40,7 @@ def _zebin(product: int) -> bytes:
 
 @pytest.mark.parametrize(
     ("flags", "abiversion", "want"),
-    [(0x6005604, 8, "sm_86"), (0x6007802, 8, "sm_120"), (0x560056, 7, "sm_86")],
+    [(0x6004B04, 8, "sm_75"), (0x6005604, 8, "sm_86"), (0x6007802, 8, "sm_120"), (0x560056, 7, "sm_86")],
 )
 def test_cubin(flags, abiversion, want):
     assert kobj_check.identify(_elf(kobj_check.EM_CUDA, flags, abiversion)) == want
