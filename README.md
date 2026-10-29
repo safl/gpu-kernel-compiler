@@ -6,6 +6,7 @@ SPDX-License-Identifier: BSD-3-Clause
 
 # gpu-kernel-compiler
 
+[![release](https://img.shields.io/github/v/release/safl/gpu-kernel-compiler?sort=semver)](https://github.com/safl/gpu-kernel-compiler/releases/latest)
 [![image](https://github.com/safl/gpu-kernel-compiler/actions/workflows/image.yml/badge.svg)](https://github.com/safl/gpu-kernel-compiler/actions/workflows/image.yml)
 [![lint](https://github.com/safl/gpu-kernel-compiler/actions/workflows/lint.yml/badge.svg)](https://github.com/safl/gpu-kernel-compiler/actions/workflows/lint.yml)
 [![REUSE status](https://api.reuse.software/badge/github.com/safl/gpu-kernel-compiler)](https://api.reuse.software/info/github.com/safl/gpu-kernel-compiler)
