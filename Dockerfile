@@ -136,7 +136,7 @@ RUN d=/usr/share/gpu-kernel-compiler/licenses && mkdir -p "$d" && cd "$d" \
     | sha256sum -c -
 
 COPY LICENSE /usr/share/gpu-kernel-compiler/licenses/gpu-kernel-compiler-LICENSE
-COPY targets nvidia-image /usr/share/gpu-kernel-compiler/
+COPY targets nvidia-image VERSION /usr/share/gpu-kernel-compiler/
 COPY shims /usr/share/gpu-kernel-compiler/shims
 COPY gkcc /usr/local/bin/gkcc
 COPY kobj_check.py /usr/local/bin/kobj_check
@@ -146,6 +146,7 @@ RUN isas=$(find /opt/rocm/lib/llvm/amdgcn/bitcode -name 'oclc_isa_version_*.bc' 
            | sed 's/^oclc_isa_version_\(.*\)\.bc$/gfx\1/' | sort -V | tr '\n' ' ') \
  && rocm=$(dpkg-query -W -f '${Version}' "amdrocm-llvm${ROCM_SERIES}") \
  && printf '%-16s %s\n' \
+        gpu-kernel-compiler "$(cat /usr/share/gpu-kernel-compiler/VERSION)" \
         base "ubuntu:26.04@sha256:88a381d5b5eeb2b35d3ad70925a362c37ce569daf43ede89ff818ec20e4d3794" \
         targets "$(tr '\n' ' ' </usr/share/gpu-kernel-compiler/targets)" \
         clang "$(dpkg-query -W -f '${Version}' "clang-${CLANG_MAJOR}") ($(clang --version | head -1))" \
@@ -159,7 +160,12 @@ RUN isas=$(find /opt/rocm/lib/llvm/amdgcn/bitcode -name 'oclc_isa_version_*.bc' 
     > /usr/share/gpu-kernel-compiler/manifest \
  && cat /usr/share/gpu-kernel-compiler/manifest
 
+# the version make build passes, which must be the one gkcc --version reports
+ARG VERSION
+RUN test "${VERSION}" = "$(cat /usr/share/gpu-kernel-compiler/VERSION)"
+
 LABEL org.opencontainers.image.title="gpu-kernel-compiler" \
+      org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.description="GPU kernels to device code for AMD, Intel and NVIDIA GPUs; NVIDIA's tools mounted at run time" \
       org.opencontainers.image.source="https://github.com/safl/gpu-kernel-compiler" \
       org.opencontainers.image.licenses="BSD-3-Clause AND Apache-2.0 WITH LLVM-exception AND NCSA AND MIT"

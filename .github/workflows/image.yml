@@ -3,7 +3,11 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # Every version in the image is pinned, so a rebuild without a change to
-# what goes into it would produce the same image: build only then.
+# what goes into it would produce the same image: build only then. A push
+# to main whose tip is 'ver: bump to vX.Y.Z' is a release: once the image
+# job has built, smoke-tested and published that commit's image, the release
+# job copies that image, unbuilt again, to X.Y.Z, X.Y and X, and tags and
+# releases vX.Y.Z with CHANGELOG.md's section as its notes.
 #
 # Podman rather than Docker: the smoke test mounts NVIDIA's image, and
 # Docker's image mounts need the containerd image store, which the runner's
@@ -24,6 +28,7 @@ on:
       - hipother.sha256
       - targets
       - nvidia-image
+      - VERSION
       - tests/**
       - .github/workflows/image.yml
   pull_request:
@@ -33,6 +38,10 @@ on:
 permissions:
   contents: read
   packages: write
+
+defaults:
+  run:
+    shell: bash
 
 concurrency:
   group: image-${{ github.ref }}
@@ -65,3 +74,59 @@ jobs:
         run: |
           printf '%s' "$TOKEN" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
           make push ENGINE=$ENGINE TAGS="${GITHUB_SHA::12}"
+
+  release:
+    needs: image
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      startsWith(github.event.head_commit.message, 'ver: bump to v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      packages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      IMAGE: ghcr.io/${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check the version, and write the release notes
+        id: version
+        run: |
+          python3 .github/scripts/release.py "$(git log -1 --format=%s)" > "$RUNNER_TEMP/notes.md"
+
+      - name: Check what of the release is done already
+        id: done
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if git fetch --quiet --depth 1 origin tag "v$VERSION" 2>/dev/null &&
+            [ "$(git rev-parse "v$VERSION^{commit}")" != "$GITHUB_SHA" ]; then
+            echo "v$VERSION is a tag of another commit"
+            exit 1
+          fi
+          if gh release view "v$VERSION" --repo "$REPO" >/dev/null 2>&1; then
+            echo "released=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish the image the image job tested as the version
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          printf '%s' "$TOKEN" | skopeo login ghcr.io -u "${{ github.actor }}" --password-stdin
+          for t in "$VERSION" "${VERSION%.*}" "${VERSION%%.*}"; do
+            skopeo copy --all --preserve-digests "docker://$IMAGE:${GITHUB_SHA::12}" "docker://$IMAGE:$t"
+          done
+          skopeo inspect --format '{{.Digest}}' "docker://$IMAGE:$VERSION" | tee "$RUNNER_TEMP/digest"
+
+      - name: Tag and create the release
+        if: steps.done.outputs.released != 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          printf '\nThe image: `%s:%s@%s`\n' "$IMAGE" "$VERSION" "$(cat "$RUNNER_TEMP/digest")" >> "$RUNNER_TEMP/notes.md"
+          gh release create "v$VERSION" --repo "$REPO" --target "$GITHUB_SHA" \
+            --title "v$VERSION" --notes-file "$RUNNER_TEMP/notes.md"

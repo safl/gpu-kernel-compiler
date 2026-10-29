@@ -18,7 +18,7 @@ target, `emu`, is no GPU: it is SPIR-V for PoCL's CPU device, so a kernel
 built for the GPUs runs, through OpenCL, where there is none.
 
 ```
-ghcr.io/safl/gpu-kernel-compiler
+ghcr.io/safl/gpu-kernel-compiler:1
 ```
 
 | Target    | Device              | Toolchain                                | Output          |
@@ -173,6 +173,28 @@ nor the image. Every version in the [Dockerfile](Dockerfile) is pinned: the base
 image by digest, ROCm and clang by package version, IGC and ocloc by
 checksum. CI builds and smoke-tests the image when any of it changes, and
 publishes it from `main` as `latest` and as the commit.
+
+## Versioning
+
+The image and `gkcc` share one version, in [VERSION](VERSION), which
+`gkcc --version` reports and [CHANGELOG.md](CHANGELOG.md) describes. It
+follows [Semantic Versioning](https://semver.org):
+
+* major: a target or input language is removed, `gkcc`'s command line
+  changes in a way an existing build notices, or a target's output stops
+  being what a loader of the previous version takes;
+* minor: a target, a language or an option is added, or a toolchain is
+  updated with the outputs still taken as before;
+* patch: a fix that changes none of the above.
+
+A release is a commit on `main` with the subject `ver: bump to vX.Y.Z`,
+setting `VERSION` to `X.Y.Z` and adding CHANGELOG.md's `## X.Y.Z` section.
+CI builds and smoke-tests its image as for any commit, then publishes that
+same image as `X.Y.Z`, `X.Y` and `X`, and tags and releases `vX.Y.Z` with the
+section as its notes ([release.py](.github/scripts/release.py) checks the
+three agree). `main` keeps publishing `latest` and each commit between
+releases. Pin a version tag, or its digest for builds that must not change at
+all.
 
 ## License
 

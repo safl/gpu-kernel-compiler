@@ -6,6 +6,7 @@
 ENGINE ?= docker
 IMAGE ?= ghcr.io/safl/gpu-kernel-compiler
 TAG ?= latest
+VERSION := $(shell cat VERSION)
 # podman's default OCI format has no SHELL, which the Dockerfile's pipes need
 FORMAT = $(if $(filter podman,$(notdir $(ENGINE))),--format docker)
 
@@ -13,7 +14,7 @@ FORMAT = $(if $(filter podman,$(notdir $(ENGINE))),--format docker)
 .PHONY: help all build smoke push test
 
 help:
-	@echo "make build    build $(IMAGE):$(TAG)"
+	@echo "make build    build $(IMAGE):$(TAG), gpu-kernel-compiler $(VERSION)"
 	@echo "make smoke    compile the tests' kernels for every target in it and check each output"
 	@echo "make push     push it, and as :TAG for each of TAGS"
 	@echo "make test     unit-test kobj_check"
@@ -22,7 +23,7 @@ help:
 all: build smoke
 
 build:
-	$(ENGINE) build $(FORMAT) -t $(IMAGE):$(TAG) .
+	$(ENGINE) build $(FORMAT) --build-arg VERSION=$(VERSION) -t $(IMAGE):$(TAG) .
 
 smoke:
 	ENGINE=$(ENGINE) tests/smoke.sh $(IMAGE):$(TAG)

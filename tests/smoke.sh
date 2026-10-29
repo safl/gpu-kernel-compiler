@@ -3,8 +3,8 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 #
-# Smoke-test a built image, no GPU needed: it must build exactly the targets
-# ./targets lists; the kernel in each language compiled for each target that
+# Smoke-test a built image, no GPU needed: it must report the version
+# ./VERSION holds and build exactly the targets ./targets lists; the kernel in each language compiled for each target that
 # takes it, by file and by stdin, must be device code for that target holding
 # the kernel; a language a target does not take must be refused; an sm_*
 # target must fail without NVIDIA's image mounted, naming the mount, and
@@ -17,6 +17,13 @@ image=$1
 here=$(cd "$(dirname "$0")" && pwd)
 engine=${ENGINE:-docker}
 nvidia=$(cat "$here/../nvidia-image")
+
+want="gkcc $(cat "$here/../VERSION")"
+got=$($engine run --rm "$image" gkcc --version)
+if [ "$got" != "$want" ]; then
+    printf 'the image reports %s, but ./VERSION says %s\n' "$got" "$want" >&2
+    exit 1
+fi
 
 want=$(cat "$here/../targets")
 got=$($engine run --rm "$image" gkcc --targets)
