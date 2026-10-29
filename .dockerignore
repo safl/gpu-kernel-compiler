@@ -2,6 +2,7 @@
 !LICENSE
 !targets
 !nvidia-image
+!VERSION
 !gkcc
 !kobj_check.py
 !hipother.sha256
