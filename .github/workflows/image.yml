@@ -43,8 +43,14 @@ defaults:
   run:
     shell: bash
 
+# One pending run is kept per group, so a run waiting for the group would be
+# cancelled by the next push's; a release's run has a group of its own, and
+# runs, however many pushes follow it
 concurrency:
-  group: image-${{ github.ref }}
+  group: >-
+    image-${{ github.ref }}${{
+      startsWith(github.event.head_commit.message, 'ver: bump to v')
+      && format('-{0}', github.sha) || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
