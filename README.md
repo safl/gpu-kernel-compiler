@@ -26,6 +26,7 @@ ghcr.io/safl/gpu-kernel-compiler:1
 |-----------|---------------------|------------------------------------------|-----------------|
 | `sm_75`   | NVIDIA Turing       | LLVM clang 22 to PTX, NVIDIA's `ptxas`    | cubin           |
 | `sm_86`   | NVIDIA Ampere       | LLVM clang 22 to PTX, NVIDIA's `ptxas`    | cubin           |
+| `sm_90`   | NVIDIA Hopper       | LLVM clang 22 to PTX, NVIDIA's `ptxas`    | cubin           |
 | `sm_120`  | NVIDIA Blackwell    | LLVM clang 22 to PTX, NVIDIA's `ptxas`    | cubin           |
 | `gfx900`  | AMD Vega 10         | ROCm's clang and device libraries         | AMD code object |
 | `gfx1012` | AMD Navi 14         | ROCm's clang and device libraries         | AMD code object |
