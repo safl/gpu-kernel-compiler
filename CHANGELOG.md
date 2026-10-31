@@ -11,6 +11,11 @@ section named for the version, `## X.Y.Z`. The versions follow
 [Semantic Versioning](https://semver.org), as the README's Versioning section
 says what that means here. `main` between releases is a preview of the next.
 
+## 1.1.0
+
+* target `sm_90`, NVIDIA Hopper, built by the same NVIDIA toolchain as
+  `sm_86` and `sm_120`.
+
 ## 1.0.0
 
 The first release, of what the image has done since it was first published
